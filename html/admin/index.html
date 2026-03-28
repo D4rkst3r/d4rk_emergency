@@ -470,6 +470,7 @@ body { font-family: -apple-system,'Segoe UI',sans-serif; color: var(--text); fon
           <div class="tab"        data-tab="grades"   onclick="switchTab('grades')">🎖 Grades</div>
           <div class="tab"        data-tab="armory"   onclick="switchTab('armory')">🔫 Armory</div>
           <div class="tab"        data-tab="vehicles" onclick="switchTab('vehicles')">🚗 Vehicles</div>
+          <div class="tab"        data-tab="blips"    onclick="switchTab('blips')">📍 Blips</div>
         </div>
 
         <div id="tab-content"></div>
@@ -530,6 +531,55 @@ let searchQuery    = '';
 let pollTimer      = null;
 
 const COLORS = ['#5b8def','#7b5cf6','#2dd4a0','#f0545a','#f5a623','#e879f9','#38bdf8','#fb923c'];
+
+// ── Blip reference data (from ec-blips) ───────────────────────
+const BLIP_COLORS = [
+  {id:0,  name:'White',       hex:'#e8e8e8'},
+  {id:1,  name:'Red',         hex:'#e84848'},
+  {id:2,  name:'Green',       hex:'#57c257'},
+  {id:3,  name:'Blue',        hex:'#4b6fa5'},
+  {id:4,  name:'Yellow',      hex:'#f0f050'},
+  {id:5,  name:'Light Blue',  hex:'#87ceeb'},
+  {id:6,  name:'Purple',      hex:'#a855f7'},
+  {id:7,  name:'Pink',        hex:'#f472b6'},
+  {id:8,  name:'Orange',      hex:'#f97316'},
+  {id:39, name:'Light Red',   hex:'#ff8080'},
+  {id:46, name:'Dark Blue',   hex:'#1e40af'},
+  {id:52, name:'Dark Green',  hex:'#166534'},
+  {id:76, name:'Dark Purple', hex:'#581c87'},
+  {id:84, name:'Gold',        hex:'#eab308'},
+];
+
+const BLIP_SPRITES = [
+  { group:'General',    items:[{id:1,name:'Standard'},{id:8,name:'Waypoint'},{id:38,name:'Standard with Ring'},{id:75,name:'Question Mark'}]},
+  { group:'Emergency',  items:[{id:50,name:'Police Station'},{id:60,name:'Police'},{id:61,name:'Hospital'},{id:153,name:'Ambulance'},{id:431,name:'Fire Department'}]},
+  { group:'Locations',  items:[{id:40,name:'Safehouse'},{id:71,name:'Garage'},{id:73,name:'Helicopter Pad'},{id:106,name:'Vehicle Shop'},{id:110,name:'Clothing Store'},{id:225,name:'Barber Shop'},{id:361,name:'Ammunation'},{id:410,name:'Mechanic'},{id:521,name:'Restaurant'},{id:566,name:'Bank'},{id:614,name:'Apartment'}]},
+  { group:'Vehicles',   items:[{id:56,name:'Garage Vehicle'},{id:226,name:'Bike'},{id:227,name:'Boat'},{id:251,name:'Helicopter'},{id:307,name:'Plane'},{id:348,name:'Motorcycle'},{id:523,name:'Race Car'},{id:595,name:'Jet Ski'}]},
+  { group:'People',     items:[{id:6,name:'Player'},{id:7,name:'Friend'},{id:23,name:'Crew'},{id:57,name:'Friend 2'},{id:66,name:'Bounty Hit'},{id:303,name:'Mugger'},{id:304,name:'Snitch'}]},
+  { group:'Services',   items:[{id:76,name:'Taxi'},{id:108,name:'Tow Truck'},{id:318,name:'Garbage Truck'},{id:408,name:'Hairdresser'},{id:409,name:'Tattoo Parlor'},{id:431,name:'Fire Dept'},{id:446,name:'Laundromat'},{id:494,name:'Recycling'}]},
+  { group:'Properties', items:[{id:350,name:'Garage for Sale'},{id:374,name:'House for Sale'},{id:375,name:'Apartment for Sale'},{id:411,name:'Garage 2'},{id:417,name:'Hangar for Sale'},{id:475,name:'Clubhouse for Sale'},{id:476,name:'Office for Sale'},{id:524,name:'Office'},{id:557,name:'Bunker'},{id:569,name:'Hangar'}]},
+  { group:'Businesses', items:[{id:93,name:'Gun Shop'},{id:135,name:'Clothes Shop'},{id:147,name:'Cinema'},{id:267,name:'Weed Shop'},{id:439,name:'Nightclub'},{id:478,name:'Warehouse'},{id:480,name:'Biker Clubhouse'},{id:484,name:'Office Garage'},{id:487,name:'Import/Export Garage'},{id:488,name:'Vehicle Warehouse'},{id:500,name:'Biker Business'},{id:513,name:'Arcade'},{id:679,name:'Auto Shop'},{id:780,name:'Agency'}]},
+  { group:'Misc',       items:[{id:84,name:'Air Race'},{id:126,name:'Bar'},{id:162,name:'Armored Van'},{id:269,name:'Cash Pickup'},{id:305,name:'Ammo Pickup'},{id:351,name:'Gang Attack'},{id:398,name:'Package'},{id:403,name:'Boost'},{id:473,name:'Pickup'},{id:481,name:'Wrench'},{id:514,name:'Skull'},{id:515,name:'Dollar Sign'},{id:618,name:'Heist Diamond'},{id:619,name:'Heist Cash'},{id:685,name:'Submarine'},{id:745,name:'Treasure Chest'}]},
+];
+
+const BLIP_DEFAULT = { sprite:1, color:0, scale:0.8, shortRange:true };
+
+function blipColorOpts(selected) {
+  return BLIP_COLORS.map(c =>
+    `<option value="${c.id}" ${c.id===selected?'selected':''}>${c.id} — ${c.name}</option>`
+  ).join('');
+}
+function blipSpriteOpts(selected) {
+  return BLIP_SPRITES.map(g =>
+    `<optgroup label="${g.group}">${g.items.map(s =>
+      `<option value="${s.id}" ${s.id===selected?'selected':''}>${s.id} — ${s.name}</option>`
+    ).join('')}</optgroup>`
+  ).join('');
+}
+function blipColorHex(id) {
+  const c = BLIP_COLORS.find(x => x.id === id);
+  return c ? c.hex : '#888';
+}
 
 // ── Boot ──────────────────────────────────────────────────────
 window.addEventListener('message', e => {
@@ -774,7 +824,7 @@ function submitNewDept() {
     cloakroomZone: {coords:{x:0,y:0,z:0},size:{x:1.5,y:1.5,z:2},rotation:0,label:'Locker Room'},
     armoryZone:    {coords:{x:0,y:0,z:0},size:{x:1.5,y:1.5,z:2},rotation:0,label:'Armory'},
     garageZone:    {coords:{x:0,y:0,z:0},size:{x:3,y:3,z:2},rotation:0,label:'Garage',spawnPoint:{x:0,y:0,z:0,w:0}},
-    grades:{0:{label:'Recruit',salary:500}}, armory:[], vehicles:[],
+    grades:{0:{label:'Recruit',salary:500}}, armory:[], vehicles:[], blips:[],
   });
   selectDept(k);
 }
@@ -790,6 +840,7 @@ function switchTab(tab) {
   if (tab==='grades')   c.innerHTML = tabGrades();
   if (tab==='armory')   c.innerHTML = tabArmory();
   if (tab==='vehicles') c.innerHTML = tabVehicles();
+  if (tab==='blips')    c.innerHTML = tabBlips();
 }
 
 function tabInfo() {
@@ -914,6 +965,138 @@ function tabVehicles() {
       <tbody>${rows}</tbody>
     </table></div>
     <button class="btn-add" onclick="draftDept.vehicles.push({model:'',label:'',grade:0});switchTab('vehicles')">＋ Add Vehicle</button>`;
+}
+
+// ── Tab: Blips ────────────────────────────────────────────────
+function tabBlips() {
+  const d = draftDept;
+  const zoneKeys = ['dutyZone','cloakroomZone','armoryZone','garageZone'];
+  const zoneOpts = zoneKeys.map(zk => {
+    const z = d[zk];
+    if (!z || !z.coords) return '';
+    return `<option value="${zk}">${esc(z.label||zk)} (${(z.coords.x||0).toFixed(1)}, ${(z.coords.y||0).toFixed(1)})</option>`;
+  }).join('');
+
+  const posBtn = (i) => IS_NUI
+    ? `<button class="btn-del" title="Use my position" onclick="fillRowFromPos(${i})" style="font-size:13px">📍</button>`
+    : `<button class="btn-del" title="Only available in-game" style="opacity:.3;cursor:not-allowed;font-size:13px">📍</button>`;
+
+  const sel = 'background:var(--input);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:4px 6px;font-size:11px;outline:none;width:100%';
+
+  const rows = (d.blips || []).map((b, i) => `<tr>
+    <td style="min-width:110px"><input value="${esc(b.label||'')}" oninput="draftDept.blips[${i}].label=this.value" placeholder="SAPD HQ" /></td>
+    <td style="width:76px"><input id="bx${i}" type="number" step="0.01" value="${(b.coords&&b.coords.x)||0}" oninput="setBlipCoord(${i},'x',+this.value)" /></td>
+    <td style="width:76px"><input id="by${i}" type="number" step="0.01" value="${(b.coords&&b.coords.y)||0}" oninput="setBlipCoord(${i},'y',+this.value)" /></td>
+    <td style="width:76px"><input id="bz${i}" type="number" step="0.01" value="${(b.coords&&b.coords.z)||0}" oninput="setBlipCoord(${i},'z',+this.value)" /></td>
+    <td style="width:160px">
+      <select style="${sel}" oninput="draftDept.blips[${i}].sprite=+this.value">
+        ${blipSpriteOpts(b.sprite||1)}
+      </select>
+    </td>
+    <td style="width:140px">
+      <div style="display:flex;align-items:center;gap:5px">
+        <div id="cdot${i}" style="width:10px;height:10px;border-radius:50%;background:${blipColorHex(b.color||0)};flex-shrink:0;border:1px solid rgba(255,255,255,.15)"></div>
+        <select style="${sel}" oninput="draftDept.blips[${i}].color=+this.value;updColorDot(${i},+this.value)">
+          ${blipColorOpts(b.color||0)}
+        </select>
+      </div>
+    </td>
+    <td style="width:62px"><input type="number" step="0.1" value="${b.scale!=null?b.scale:0.8}" min="0.1" max="3" oninput="draftDept.blips[${i}].scale=+this.value" /></td>
+    <td style="width:36px;text-align:center"><input type="checkbox" ${b.shortRange!==false?'checked':''} onchange="draftDept.blips[${i}].shortRange=this.checked" style="width:auto;cursor:pointer" /></td>
+    <td style="width:28px">${posBtn(i)}</td>
+    <td style="width:34px"><button class="btn-del" onclick="draftDept.blips.splice(${i},1);switchTab('blips')">✕</button></td>
+  </tr>`).join('');
+
+  const addPosBtn = IS_NUI
+    ? `<button class="btn btn-ghost" style="padding:6px 12px;font-size:11px" onclick="addBlipAtPos()">📍 Add at My Position</button>`
+    : '';
+
+  return `
+    <div class="slabel">Map Blips</div>
+    <div style="background:var(--s2);border:1px solid var(--border);border-radius:var(--r2);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--sub);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span>From zone:</span>
+      <select id="zone-copy-sel" style="background:var(--input);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:4px 8px;font-size:11px;outline:none">
+        <option value="">— select —</option>${zoneOpts}
+      </select>
+      <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="copyZoneToBlip()">Add as Blip</button>
+      <a href="https://docs.fivem.net/docs/game-references/blips/" target="_blank"
+         style="margin-left:auto;color:var(--a1);text-decoration:none;font-size:10px">Sprite &amp; Color Reference ↗</a>
+    </div>
+    <div class="twrap" style="overflow-x:auto"><table class="te">
+      <thead><tr>
+        <th>Label</th><th>X</th><th>Y</th><th>Z</th>
+        <th>Sprite</th><th>Color</th><th>Scale</th>
+        <th title="Short Range">SR</th><th title="Player Position">📍</th><th></th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn-add" style="flex:1" onclick="addNewBlip()">＋ Add Blip</button>
+      ${addPosBtn}
+    </div>`;
+}
+
+function updColorDot(i, colorId) {
+  const dot = document.getElementById('cdot' + i);
+  if (dot) dot.style.background = blipColorHex(colorId);
+}
+
+function addNewBlip(coords) {
+  if (!draftDept.blips) draftDept.blips = [];
+  draftDept.blips.push({
+    label: '',
+    coords: coords || {x:0, y:0, z:0},
+    sprite: BLIP_DEFAULT.sprite,
+    color:  BLIP_DEFAULT.color,
+    scale:  BLIP_DEFAULT.scale,
+    shortRange: BLIP_DEFAULT.shortRange,
+  });
+  switchTab('blips');
+}
+
+function setBlipCoord(i, axis, val) {
+  if (!draftDept.blips[i].coords) draftDept.blips[i].coords = {x:0,y:0,z:0};
+  draftDept.blips[i].coords[axis] = val;
+}
+
+function copyZoneToBlip() {
+  const zk = document.getElementById('zone-copy-sel').value;
+  if (!zk || !draftDept[zk] || !draftDept[zk].coords) return;
+  const z = draftDept[zk];
+  if (!draftDept.blips) draftDept.blips = [];
+  draftDept.blips.push({
+    label: z.label || draftDept.shortLabel || '',
+    coords: { x: z.coords.x||0, y: z.coords.y||0, z: z.coords.z||0 },
+    sprite: BLIP_DEFAULT.sprite,
+    color:  BLIP_DEFAULT.color,
+    scale:  BLIP_DEFAULT.scale,
+    shortRange: BLIP_DEFAULT.shortRange,
+  });
+  switchTab('blips');
+}
+
+async function fillRowFromPos(i) {
+  const coords = await nuiCall('admin_getPlayerCoords');
+  if (!coords) return;
+  if (!draftDept.blips[i].coords) draftDept.blips[i].coords = {x:0,y:0,z:0};
+  draftDept.blips[i].coords = { x: coords.x, y: coords.y, z: coords.z };
+  const xEl = document.getElementById('bx' + i);
+  const yEl = document.getElementById('by' + i);
+  const zEl = document.getElementById('bz' + i);
+  if (xEl) xEl.value = coords.x;
+  if (yEl) yEl.value = coords.y;
+  if (zEl) zEl.value = coords.z;
+  toast('Coords updated from player position', 'success');
+}
+
+async function addBlipAtPos() {
+  const coords = await nuiCall('admin_getPlayerCoords');
+  if (!coords) { toast('Could not get player position', 'error'); return; }
+  addNewBlip({ x: coords.x, y: coords.y, z: coords.z });
+  // Set label to dept short name on the newly added entry
+  draftDept.blips[draftDept.blips.length - 1].label = draftDept.shortLabel || '';
+  switchTab('blips');
+  toast(`Blip added at ${coords.x}, ${coords.y}, ${coords.z}`, 'success');
 }
 
 // ── Save ──────────────────────────────────────────────────────

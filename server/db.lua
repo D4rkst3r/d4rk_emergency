@@ -5,7 +5,6 @@
 
 DB       = {}    -- global: used by main.lua and admin.lua
 DeptMeta = {}    -- global: { [deptKey] = { updatedAt, updatedBy } }
-                 -- seeded on LoadAll so version tracking works from first poll
 
 -- ── Vec helpers ───────────────────────────────────────────────
 
@@ -37,9 +36,7 @@ local function encodeZone(zone, hasSpawn)
         rotation = zone.rotation or 0,
         label    = zone.label or '',
     }
-    if hasSpawn then
-        z.spawnPoint = v4Encode(zone.spawnPoint)
-    end
+    if hasSpawn then z.spawnPoint = v4Encode(zone.spawnPoint) end
     return z
 end
 
@@ -57,6 +54,39 @@ local function decodeZone(z, hasSpawn)
     return zone
 end
 
+-- Blips keep plain-table coords (no vec3 needed — client passes x,y,z directly)
+local function encodeBlips(blips)
+    if not blips then return {} end
+    local out = {}
+    for _, b in ipairs(blips) do
+        out[#out + 1] = {
+            label      = b.label      or '',
+            coords     = v3Encode(b.coords),
+            sprite     = b.sprite     or 1,
+            color      = b.color      or 0,
+            scale      = b.scale      or 1.0,
+            shortRange = b.shortRange or false,
+        }
+    end
+    return out
+end
+
+local function decodeBlips(blips)
+    if not blips then return {} end
+    local out = {}
+    for _, b in ipairs(blips) do
+        out[#out + 1] = {
+            label      = b.label      or '',
+            coords     = b.coords     or { x = 0, y = 0, z = 0 },
+            sprite     = b.sprite     or 1,
+            color      = b.color      or 0,
+            scale      = b.scale      or 1.0,
+            shortRange = b.shortRange or false,
+        }
+    end
+    return out
+end
+
 -- ── Serialization ─────────────────────────────────────────────
 
 local function encodeDept(deptKey, dept)
@@ -69,6 +99,7 @@ local function encodeDept(deptKey, dept)
         armory        = dept.armory   or {},
         vehicles      = dept.vehicles or {},
         outfits       = dept.outfits  or { male = {}, female = {} },
+        blips         = encodeBlips(dept.blips),
     }
     return {
         dept_key    = deptKey,
@@ -99,6 +130,7 @@ local function decodeDept(row)
         armory        = parsed.armory   or {},
         vehicles      = parsed.vehicles or {},
         outfits       = parsed.outfits  or { male = {}, female = {} },
+        blips         = decodeBlips(parsed.blips),
     }
 end
 
@@ -110,21 +142,16 @@ function DB.LoadAll(cb)
         if rows then
             for _, row in ipairs(rows) do
                 local dept = decodeDept(row)
-                if dept then
-                    result[row.dept_key] = dept
-                end
+                if dept then result[row.dept_key] = dept end
             end
         end
-
-        -- Seed DeptMeta with baseline timestamps so the version tracking
-        -- in the poll loop works correctly from the very first status request.
+        -- Seed baseline timestamps so version tracking works from first poll
         local startTime = os.time()
         for key in pairs(result) do
             if not DeptMeta[key] then
                 DeptMeta[key] = { updatedAt = startTime, updatedBy = 'server' }
             end
         end
-
         cb(result)
     end)
 end
@@ -173,9 +200,7 @@ function DB.DeleteAwait(deptKey)
     return affected and affected > 0
 end
 
--- ── Export helper ─────────────────────────────────────────────
--- Returns a plain-table version safe for json.encode / NUI / HTTP
-
+-- Returns plain-table dept safe for json.encode / NUI / HTTP
 function DB.ExportDept(deptKey, dept)
     local function ev3(v) return v and { x = v.x, y = v.y, z = v.z } or nil end
     local function ev4(v) return v and { x = v.x, y = v.y, z = v.z, w = v.w } or nil end
@@ -198,11 +223,11 @@ function DB.ExportDept(deptKey, dept)
         grades        = dept.grades,
         armory        = dept.armory,
         vehicles      = dept.vehicles,
+        blips         = dept.blips or {},
     }
 end
 
 -- Applies plain-table data (from JSON/NUI) back into ActiveConfig with vec3/vec4
-
 function DB.ApplyToActiveConfig(deptKey, data)
     local function mkv3(t)
         if not t then return vec3(0, 0, 0) end
@@ -214,14 +239,21 @@ function DB.ApplyToActiveConfig(deptKey, data)
     end
     local function mkZone(z, sp)
         if not z then return nil end
-        local zone = {
-            coords   = mkv3(z.coords),
-            size     = mkv3(z.size),
-            rotation = z.rotation or 0,
-            label    = z.label or '',
-        }
+        local zone = { coords = mkv3(z.coords), size = mkv3(z.size), rotation = z.rotation or 0, label = z.label or '' }
         if sp and z.spawnPoint then zone.spawnPoint = mkv4(z.spawnPoint) end
         return zone
+    end
+
+    local blips = {}
+    for _, b in ipairs(data.blips or {}) do
+        blips[#blips + 1] = {
+            label      = b.label      or '',
+            coords     = b.coords     or { x = 0, y = 0, z = 0 },
+            sprite     = b.sprite     or 1,
+            color      = b.color      or 0,
+            scale      = b.scale      or 1.0,
+            shortRange = b.shortRange or false,
+        }
     end
 
     ActiveConfig[deptKey] = {
@@ -237,5 +269,6 @@ function DB.ApplyToActiveConfig(deptKey, data)
         armory        = data.armory   or {},
         vehicles      = data.vehicles or {},
         outfits       = data.outfits  or { male = {}, female = {} },
+        blips         = blips,
     }
 end

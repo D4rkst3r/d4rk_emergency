@@ -1,29 +1,23 @@
 -- ============================================================
 --  d4rk_emergency — Server Main
---  Uses ActiveConfig (loaded from DB, falls back to Config.Departments as seed)
 -- ============================================================
 
-ActiveConfig = {}       -- populated by DB.LoadAll on startup
+ActiveConfig    = {}
 local onDutyPlayers = {}
 
--- ── Startup: seed DB if empty, then load ────────────────────
+-- ── Startup ───────────────────────────────────────────────────
 
 CreateThread(function()
-    Wait(500)  -- give oxmysql a moment
-
+    Wait(500)
     DB.LoadAll(function(depts)
         if next(depts) then
-            -- DB has data — use it
             ActiveConfig = depts
             print(('[d4rk_emergency] Loaded %d department(s) from DB.'):format(table.count(ActiveConfig)))
         else
-            -- First run — seed from static config
             print('[d4rk_emergency] No departments in DB — seeding from Config.Departments ...')
             for deptKey, dept in pairs(Config.Departments) do
                 DB.Save(deptKey, dept, function(ok)
-                    if ok then
-                        print(('[d4rk_emergency] Seeded: %s'):format(deptKey))
-                    end
+                    if ok then print(('[d4rk_emergency] Seeded: %s'):format(deptKey)) end
                 end)
                 ActiveConfig[deptKey] = dept
             end
@@ -37,7 +31,7 @@ function table.count(t)
     return n
 end
 
--- ── Utility ──────────────────────────────────────────────────
+-- ── Utility ───────────────────────────────────────────────────
 
 local function GetPlayerJob(source)
     local Player = exports.qbx_core:GetPlayer(source)
@@ -62,7 +56,26 @@ local function Notify(source, title, msg, ntype)
     })
 end
 
--- ── Duty ─────────────────────────────────────────────────────
+-- ── Blips ─────────────────────────────────────────────────────
+-- Clients request all dept blips on resource start so they get
+-- the DB version rather than the static shared.lua fallback.
+
+RegisterNetEvent('d4rk_emergency:server:requestBlips', function()
+    local source = source
+    local blipData = {}
+    for deptKey, dept in pairs(ActiveConfig) do
+        if dept.blips and #dept.blips > 0 then
+            blipData[deptKey] = {
+                shortLabel = dept.shortLabel,
+                color      = dept.color,
+                blips      = dept.blips,
+            }
+        end
+    end
+    TriggerClientEvent('d4rk_emergency:client:initBlips', source, blipData)
+end)
+
+-- ── Duty ──────────────────────────────────────────────────────
 
 function GetDutyCount(deptKey)
     local count = 0
@@ -184,14 +197,12 @@ RegisterNetEvent('d4rk_emergency:server:spawnVehicle', function(deptKey, model)
     TriggerClientEvent('d4rk_emergency:client:spawnVehicle', source, deptKey, model)
 end)
 
--- ── Config sync to clients ────────────────────────────────────
+-- ── Config sync ───────────────────────────────────────────────
 
 lib.callback.register('d4rk_emergency:server:getActiveConfig', function(source)
-    -- Send the client their department's config (plain table, no vec3)
     local Player = exports.qbx_core:GetPlayer(source)
     if not Player then return nil end
     local jobName = Player.PlayerData.job.name
-
     for deptKey, dept in pairs(ActiveConfig) do
         if dept.jobName == jobName then
             return DB.ExportDept(deptKey, dept)

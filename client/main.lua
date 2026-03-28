@@ -2,13 +2,51 @@
 --  d4rk_emergency — Client Main
 -- ============================================================
 
-local isOnDuty   = false
+local isOnDuty    = false
 local currentDept = nil
-local dutyCounts  = {}   -- [deptKey] = count
+local dutyCounts  = {}
 
--- ============================================================
---  UTILITY
--- ============================================================
+-- ── Blip management ───────────────────────────────────────────
+-- Blips are visible to ALL players (public map markers)
+-- activeBlips[deptKey] = { blipHandle, blipHandle, ... }
+
+local activeBlips = {}
+
+local function RemoveDeptBlips(deptKey)
+    if not activeBlips[deptKey] then return end
+    for _, blip in ipairs(activeBlips[deptKey]) do
+        if DoesBlipExist(blip) then RemoveBlip(blip) end
+    end
+    activeBlips[deptKey] = nil
+end
+
+local function CreateDeptBlips(deptKey, deptData)
+    RemoveDeptBlips(deptKey)
+    local blips = deptData.blips
+    if not blips or #blips == 0 then return end
+
+    activeBlips[deptKey] = {}
+    for _, b in ipairs(blips) do
+        if b.coords then
+            local blip = AddBlipForCoord(b.coords.x, b.coords.y, b.coords.z)
+            SetBlipSprite(blip, b.sprite or 1)
+            SetBlipColour(blip, b.color or 0)
+            SetBlipScale(blip, b.scale or 1.0)
+            SetBlipAsShortRange(blip, b.shortRange or false)
+            BeginTextCommandSetBlipName('STRING')
+            AddTextComponentSubstringPlayerName(b.label ~= '' and b.label or (deptData.shortLabel or deptKey))
+            EndTextCommandSetBlipName(blip)
+            activeBlips[deptKey][#activeBlips[deptKey] + 1] = blip
+        end
+    end
+end
+
+-- Called by client/admin.lua when configUpdated fires
+function RefreshDeptBlips(deptKey, deptData)
+    CreateDeptBlips(deptKey, deptData)
+end
+
+-- ── Utility ───────────────────────────────────────────────────
 
 local function GetPlayerJob()
     local playerData = exports.qbx_core:GetPlayerData()
@@ -32,18 +70,14 @@ local function Notify(title, msg, ntype)
     })
 end
 
--- ============================================================
---  OX_TARGET ZONE REGISTRATION
--- ============================================================
+-- ── Zone registration ─────────────────────────────────────────
 
 CreateThread(function()
-    -- Wait for player data to be ready
     while not exports.qbx_core:GetPlayerData() do Wait(500) end
 
     local deptKey, dept = GetCurrentDept()
-    if not deptKey then return end  -- Not a department member
+    if not deptKey then return end
 
-    -- ── DUTY BOARD ─────────────────────────────────────────
     exports.ox_target:addBoxZone({
         coords   = dept.dutyZone.coords,
         size     = dept.dutyZone.size,
@@ -60,7 +94,6 @@ CreateThread(function()
         }
     })
 
-    -- ── CLOAKROOM ───────────────────────────────────────────
     exports.ox_target:addBoxZone({
         coords   = dept.cloakroomZone.coords,
         size     = dept.cloakroomZone.size,
@@ -81,7 +114,6 @@ CreateThread(function()
                 label    = 'Remove Uniform',
                 icon     = 'fas fa-undo',
                 onSelect = function()
-                    -- Restore saved civilian outfit
                     exports['illenium-appearance']:restoreSavedOutfit()
                     Notify(dept.shortLabel, 'Uniform removed.', 'inform')
                 end,
@@ -89,7 +121,6 @@ CreateThread(function()
         }
     })
 
-    -- ── ARMORY ──────────────────────────────────────────────
     exports.ox_target:addBoxZone({
         coords   = dept.armoryZone.coords,
         size     = dept.armoryZone.size,
@@ -109,7 +140,6 @@ CreateThread(function()
         }
     })
 
-    -- ── GARAGE ──────────────────────────────────────────────
     exports.ox_target:addBoxZone({
         coords   = dept.garageZone.coords,
         size     = dept.garageZone.size,
@@ -130,42 +160,30 @@ CreateThread(function()
     })
 end)
 
--- ============================================================
---  CLOAKROOM
--- ============================================================
+-- ── Cloakroom ─────────────────────────────────────────────────
 
 function OpenCloakroom(deptKey, dept)
     local _, grade = GetPlayerJob()
     local gender   = exports['illenium-appearance']:getPedGender() == 1 and 'female' or 'male'
     local outfits  = dept.outfits[gender]
-
-    -- Find best outfit for current grade (fall back to grade 0)
-    local outfit = outfits[grade] or outfits[0]
+    local outfit   = outfits[grade] or outfits[0]
     if not outfit then
         Notify(dept.shortLabel, 'No outfit configured for your rank.', 'error')
         return
     end
-
-    -- Save current civilian outfit before applying uniform
     exports['illenium-appearance']:saveCurrentOutfit()
-
-    -- Apply components
     for compId, compData in pairs(outfit.components) do
         SetPedComponentVariation(PlayerPedId(), compId, compData.item, compData.texture, 0)
     end
-
     local gradeLabel = dept.grades[grade] and dept.grades[grade].label or 'Unknown'
     Notify(dept.shortLabel, ('Uniform applied: %s'):format(gradeLabel), 'success')
 end
 
--- ============================================================
---  ARMORY MENU
--- ============================================================
+-- ── Armory menu ───────────────────────────────────────────────
 
 function OpenArmoryMenu(deptKey, dept)
     local _, grade = GetPlayerJob()
     local options  = {}
-
     for _, entry in ipairs(dept.armory) do
         if grade >= entry.grade then
             options[#options + 1] = {
@@ -177,28 +195,19 @@ function OpenArmoryMenu(deptKey, dept)
             }
         end
     end
-
     if #options == 0 then
         Notify(dept.shortLabel, 'No equipment available for your rank.', 'error')
         return
     end
-
-    lib.registerContext({
-        id      = 'd4rk_armory_' .. deptKey,
-        title   = dept.shortLabel .. ' — Armory',
-        options = options,
-    })
+    lib.registerContext({ id = 'd4rk_armory_' .. deptKey, title = dept.shortLabel .. ' — Armory', options = options })
     lib.showContext('d4rk_armory_' .. deptKey)
 end
 
--- ============================================================
---  GARAGE MENU
--- ============================================================
+-- ── Garage menu ───────────────────────────────────────────────
 
 function OpenGarageMenu(deptKey, dept)
     local _, grade = GetPlayerJob()
     local options  = {}
-
     for _, v in ipairs(dept.vehicles) do
         if grade >= v.grade then
             options[#options + 1] = {
@@ -210,47 +219,27 @@ function OpenGarageMenu(deptKey, dept)
             }
         end
     end
-
     if #options == 0 then
         Notify(dept.shortLabel, 'No vehicles available for your rank.', 'error')
         return
     end
-
-    lib.registerContext({
-        id      = 'd4rk_garage_' .. deptKey,
-        title   = dept.shortLabel .. ' — Garage',
-        options = options,
-    })
+    lib.registerContext({ id = 'd4rk_garage_' .. deptKey, title = dept.shortLabel .. ' — Garage', options = options })
     lib.showContext('d4rk_garage_' .. deptKey)
 end
 
--- ============================================================
---  VEHICLE SPAWN (triggered from server)
--- ============================================================
+-- ── Vehicle spawn ─────────────────────────────────────────────
 
 RegisterNetEvent('d4rk_emergency:client:spawnVehicle', function(deptKey, model)
     local dept       = Config.Departments[deptKey]
     local spawnPoint = dept.garageZone.spawnPoint
-
     lib.requestModel(model)
-
-    local vehicle = CreateVehicle(
-        GetHashKey(model),
-        spawnPoint.x, spawnPoint.y, spawnPoint.z,
-        spawnPoint.w,
-        true, false
-    )
-
+    local vehicle = CreateVehicle(GetHashKey(model), spawnPoint.x, spawnPoint.y, spawnPoint.z, spawnPoint.w, true, false)
     SetPedIntoVehicle(PlayerPedId(), vehicle, -1)
     SetVehicleEngineOn(vehicle, true, true, false)
-
-    -- Set faction livery/extras if needed — expand here
     Notify(dept.shortLabel, ('Vehicle spawned: %s'):format(model), 'success')
 end)
 
--- ============================================================
---  DUTY STATE SYNC (from server)
--- ============================================================
+-- ── Duty sync ─────────────────────────────────────────────────
 
 RegisterNetEvent('d4rk_emergency:client:dutyChanged', function(onDuty, deptKey)
     isOnDuty    = onDuty
@@ -261,19 +250,31 @@ RegisterNetEvent('d4rk_emergency:client:updateDutyCount', function(deptKey, coun
     dutyCounts[deptKey] = count
 end)
 
--- Fetch duty counts on resource start
+-- ── Blip init from server (DB data) ──────────────────────────
+
+RegisterNetEvent('d4rk_emergency:client:initBlips', function(blipData)
+    for deptKey, data in pairs(blipData) do
+        CreateDeptBlips(deptKey, data)
+    end
+end)
+
+-- ── Dept deleted ──────────────────────────────────────────────
+
+RegisterNetEvent('d4rk_emergency:client:deptDeleted', function(deptKey)
+    RemoveDeptBlips(deptKey)
+end)
+
+-- ── Resource start ────────────────────────────────────────────
+
 AddEventHandler('onClientResourceStart', function(resourceName)
     if resourceName ~= GetCurrentResourceName() then return end
     for deptKey in pairs(Config.Departments) do
         TriggerServerEvent('d4rk_emergency:server:getDutyCount', deptKey)
     end
+    -- Request blip data from server (loaded from DB)
+    TriggerServerEvent('d4rk_emergency:server:requestBlips')
 end)
 
--- ============================================================
---  JOB CHANGE — re-register zones if job changes mid-session
--- ============================================================
-
 AddEventHandler('QBCore:Client:OnJobUpdate', function(JobInfo)
-    -- Resource restart handles re-registration
-    -- Optional: TriggerEvent to re-run zone setup
+    -- Zone re-registration handled on resource restart
 end)

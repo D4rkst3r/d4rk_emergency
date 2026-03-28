@@ -26,7 +26,7 @@ RegisterNUICallback('admin_close', function(_, cb)
     cb('ok')
 end)
 
--- Escape key closes the panel
+-- Escape closes the panel
 CreateThread(function()
     while true do
         Wait(0)
@@ -58,7 +58,18 @@ RegisterNUICallback('admin_deleteDept', function(data, cb)
     end, data.key)
 end)
 
--- ── Collaboration callbacks (were missing) ────────────────────
+-- ── Player position (for blip placement) ─────────────────────
+
+RegisterNUICallback('admin_getPlayerCoords', function(_, cb)
+    local coords = GetEntityCoords(PlayerPedId(), true)
+    cb({
+        x = math.floor(coords.x * 100) / 100,
+        y = math.floor(coords.y * 100) / 100,
+        z = math.floor(coords.z * 100) / 100,
+    })
+end)
+
+-- ── Collaboration callbacks ───────────────────────────────────
 
 RegisterNUICallback('admin_presence', function(data, cb)
     lib.callback('d4rk_emergency:admin:presence', false, function(result)
@@ -75,6 +86,7 @@ end)
 -- ── Config hot-reload ─────────────────────────────────────────
 
 RegisterNetEvent('d4rk_emergency:client:configUpdated', function(deptKey, deptData)
+    -- 1. Update local Config.Departments (menus / labels)
     if Config.Departments[deptKey] then
         local dept = Config.Departments[deptKey]
         dept.label      = deptData.label
@@ -84,9 +96,14 @@ RegisterNetEvent('d4rk_emergency:client:configUpdated', function(deptKey, deptDa
         dept.grades     = deptData.grades
         dept.armory     = deptData.armory
         dept.vehicles   = deptData.vehicles
+        dept.blips      = deptData.blips
     end
+
+    -- 2. Refresh map blips live (RefreshDeptBlips is defined in client/main.lua)
+    RefreshDeptBlips(deptKey, deptData)
 end)
 
 RegisterNetEvent('d4rk_emergency:client:deptDeleted', function(deptKey)
     Config.Departments[deptKey] = nil
+    -- Blip removal is handled in client/main.lua's deptDeleted handler
 end)
