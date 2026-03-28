@@ -1,10 +1,21 @@
 -- ============================================================
 --  d4rk_emergency — Client Main
+--  Uses d4rk_core for: Notify, GetPlayerJob, CreateBlip
 -- ============================================================
 
 local isOnDuty    = false
 local currentDept = nil
 local dutyCounts  = {}
+
+-- ── d4rk_core shortcuts ───────────────────────────────────────
+
+local function Notify(title, msg, ntype)
+    exports['d4rk_core']:Notify(title, msg, ntype)
+end
+
+local function GetPlayerJob()
+    return exports['d4rk_core']:GetPlayerJob()
+end
 
 -- ── Blip management ───────────────────────────────────────────
 -- Blips are visible to ALL players (public map markers)
@@ -33,8 +44,8 @@ local function CreateDeptBlips(deptKey, deptData)
             SetBlipSprite(blip, b.sprite or 1)
             SetBlipColour(blip, b.color or 0)
             SetBlipScale(blip, b.scale or 0.85)
-            SetBlipAsShortRange(blip, b.shortRange ~= false)  -- Default true, wie bei dir
-            BeginTextCommandSetBlipName("STRING")
+            SetBlipAsShortRange(blip, b.shortRange ~= false)
+            BeginTextCommandSetBlipName('STRING')
             AddTextComponentString(b.label ~= '' and b.label or (deptData.shortLabel or deptKey))
             EndTextCommandSetBlipName(blip)
             activeBlips[deptKey][#activeBlips[deptKey] + 1] = blip
@@ -49,26 +60,10 @@ end
 
 -- ── Utility ───────────────────────────────────────────────────
 
-local function GetPlayerJob()
-    local playerData = exports.qbx_core:GetPlayerData()
-    if not playerData then return nil, nil end
-    return playerData.job.name, playerData.job.grade.level
-end
-
 local function GetCurrentDept()
     local jobName = GetPlayerJob()
     if not jobName then return nil, nil end
     return Config.GetDeptByJob(jobName)
-end
-
-local function Notify(title, msg, ntype)
-    lib.notify({
-        title       = title,
-        description = msg,
-        type        = ntype or 'inform',
-        duration    = 5000,
-        position    = Config.NotifyPosition,
-    })
 end
 
 -- ── Zone registration ─────────────────────────────────────────
@@ -234,7 +229,11 @@ RegisterNetEvent('d4rk_emergency:client:spawnVehicle', function(deptKey, model)
     local dept       = Config.Departments[deptKey]
     local spawnPoint = dept.garageZone.spawnPoint
     lib.requestModel(model)
-    local vehicle = CreateVehicle(GetHashKey(model), spawnPoint.x, spawnPoint.y, spawnPoint.z, spawnPoint.w, true, false)
+    local vehicle = CreateVehicle(
+        GetHashKey(model),
+        spawnPoint.x, spawnPoint.y, spawnPoint.z, spawnPoint.w,
+        true, false
+    )
     SetPedIntoVehicle(PlayerPedId(), vehicle, -1)
     SetVehicleEngineOn(vehicle, true, true, false)
     Notify(dept.shortLabel, ('Vehicle spawned: %s'):format(model), 'success')
@@ -272,7 +271,6 @@ AddEventHandler('onClientResourceStart', function(resourceName)
     for deptKey in pairs(Config.Departments) do
         TriggerServerEvent('d4rk_emergency:server:getDutyCount', deptKey)
     end
-    -- Request blip data from server (loaded from DB)
     TriggerServerEvent('d4rk_emergency:server:requestBlips')
 end)
 

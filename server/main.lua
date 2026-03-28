@@ -1,9 +1,24 @@
 -- ============================================================
 --  d4rk_emergency — Server Main
+--  Uses d4rk_core for: Notify, Logging, GetPlayerJob, GetIdentifier
 -- ============================================================
 
-ActiveConfig    = {}
+ActiveConfig        = {}
 local onDutyPlayers = {}
+
+-- ── d4rk_core shortcuts ───────────────────────────────────────
+
+local function Notify(source, title, msg, ntype)
+    exports['d4rk_core']:Notify(source, title, msg, ntype)
+end
+
+local function Log(msg, level, fields)
+    exports['d4rk_core']:Log('emergency', msg, level or 'info', fields)
+end
+
+local function GetPlayerJob(source)
+    return exports['d4rk_core']:GetPlayerJob(source)
+end
 
 -- ── Startup ───────────────────────────────────────────────────
 
@@ -12,12 +27,12 @@ CreateThread(function()
     DB.LoadAll(function(depts)
         if next(depts) then
             ActiveConfig = depts
-            print(('[d4rk_emergency] Loaded %d department(s) from DB.'):format(table.count(ActiveConfig)))
+            Log(('Loaded %d department(s) from DB.'):format(DC.TableCount(ActiveConfig)), 'success')
         else
-            print('[d4rk_emergency] No departments in DB — seeding from Config.Departments ...')
+            Log('No departments in DB — seeding from Config.Departments...', 'warn')
             for deptKey, dept in pairs(Config.Departments) do
                 DB.Save(deptKey, dept, function(ok)
-                    if ok then print(('[d4rk_emergency] Seeded: %s'):format(deptKey)) end
+                    if ok then Log(('Seeded: %s'):format(deptKey)) end
                 end)
                 ActiveConfig[deptKey] = dept
             end
@@ -33,35 +48,13 @@ CreateThread(function()
     end)
 end)
 
-function table.count(t)
-    local n = 0
-    for _ in pairs(t) do n = n + 1 end
-    return n
-end
-
 -- ── Utility ───────────────────────────────────────────────────
-
-local function GetPlayerJob(source)
-    local Player = exports.qbx_core:GetPlayer(source)
-    if not Player then return nil, nil end
-    return Player.PlayerData.job.name, Player.PlayerData.job.grade.level
-end
 
 local function IsValidDeptJob(source, deptKey)
     local dept = ActiveConfig[deptKey]
     if not dept then return false end
     local jobName = GetPlayerJob(source)
     return jobName == dept.jobName
-end
-
-local function Notify(source, title, msg, ntype)
-    TriggerClientEvent('ox_lib:notify', source, {
-        title       = title,
-        description = msg,
-        type        = ntype or 'inform',
-        duration    = 5000,
-        position    = Config.NotifyPosition,
-    })
 end
 
 -- ── Blips ─────────────────────────────────────────────────────
@@ -113,19 +106,23 @@ RegisterNetEvent('d4rk_emergency:server:toggleDuty', function(deptKey)
     end
 
     local jobName, grade = GetPlayerJob(source)
-    local dept = ActiveConfig[deptKey]
+    local dept           = ActiveConfig[deptKey]
 
     if onDutyPlayers[source] then
         onDutyPlayers[source] = nil
         exports.qbx_core:SetPlayerJobDuty(source, false)
         Notify(source, dept.shortLabel, 'You are now OFF DUTY.', 'inform')
         TriggerClientEvent('d4rk_emergency:client:dutyChanged', source, false, deptKey)
+        Log(('%s went OFF DUTY [%s]'):format(
+            exports['d4rk_core']:GetPlayerName(source), dept.shortLabel))
     else
         onDutyPlayers[source] = { deptKey = deptKey, grade = grade }
         exports.qbx_core:SetPlayerJobDuty(source, true)
         local gradeLabel = dept.grades[grade] and dept.grades[grade].label or 'Unknown'
         Notify(source, dept.shortLabel, ('You are now ON DUTY as %s.'):format(gradeLabel), 'success')
         TriggerClientEvent('d4rk_emergency:client:dutyChanged', source, true, deptKey)
+        Log(('%s went ON DUTY [%s] as %s'):format(
+            exports['d4rk_core']:GetPlayerName(source), dept.shortLabel, gradeLabel))
     end
 
     TriggerClientEvent('d4rk_emergency:client:updateDutyCount', -1, deptKey, GetDutyCount(deptKey))
@@ -144,8 +141,13 @@ local function PaySalary()
             local gradeData = dept.grades[data.grade]
             if gradeData then
                 local amount = gradeData.salary
-                exports['Renewed-Banking']:addAccountMoney('bank', src, amount, ('Salary - %s'):format(dept.shortLabel))
-                Notify(src, 'Payroll', ('Salary received: $%s (%s)'):format(amount, gradeData.label), 'success')
+                exports['Renewed-Banking']:addAccountMoney(
+                    'bank', src, amount,
+                    ('Salary - %s'):format(dept.shortLabel)
+                )
+                Notify(src, 'Payroll',
+                    ('Salary received: %s (%s)'):format(DC.FormatMoney(amount), gradeData.label),
+                    'success')
             end
         end
     end
@@ -168,9 +170,9 @@ RegisterNetEvent('d4rk_emergency:server:giveWeapon', function(deptKey, itemName)
         return
     end
 
-    local dept    = ActiveConfig[deptKey]
+    local dept     = ActiveConfig[deptKey]
     local _, grade = GetPlayerJob(source)
-    local allowed = false
+    local allowed  = false
 
     for _, entry in ipairs(dept.armory) do
         if entry.item == itemName and grade >= entry.grade then

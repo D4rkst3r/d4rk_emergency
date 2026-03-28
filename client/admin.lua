@@ -1,6 +1,7 @@
 -- ============================================================
 --  d4rk_emergency — Client Admin
 --  Opens NUI panel via command, bridges NUI <-> server callbacks
+--  Uses d4rk_core: DC.Round for coord precision
 -- ============================================================
 
 local nuiOpen = false
@@ -63,9 +64,9 @@ end)
 RegisterNUICallback('admin_getPlayerCoords', function(_, cb)
     local coords = GetEntityCoords(PlayerPedId(), true)
     cb({
-        x = math.floor(coords.x * 100) / 100,
-        y = math.floor(coords.y * 100) / 100,
-        z = math.floor(coords.z * 100) / 100,
+        x = DC.Round(coords.x, 2),
+        y = DC.Round(coords.y, 2),
+        z = DC.Round(coords.z, 2),
     })
 end)
 

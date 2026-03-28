@@ -2,11 +2,22 @@
 --  d4rk_emergency — Admin Layer v2
 --  Browser: http://server:30120/d4rk_emergency/
 --  In-game: /<Config.Admin.Command>  (ace: Config.Admin.Ace)
---  Collaboration: presence heartbeat + version tracking
+--  Uses d4rk_core for: IsAdmin, IsSuperAdmin, Log
 -- ============================================================
 
 local adminToken = Config.Admin.Token
-local adminAce   = Config.Admin.Ace
+
+-- ── d4rk_core shortcuts ───────────────────────────────────────
+
+local function IsAdmin(source)
+    -- Eigene Ace-Permission ODER d4rk_core admin check
+    if IsPlayerAceAllowed(source, Config.Admin.Ace) then return true end
+    return exports['d4rk_core']:IsAdmin(source)
+end
+
+local function Log(msg, level, fields)
+    exports['d4rk_core']:Log('emergency:admin', msg, level or 'info', fields)
+end
 
 -- ── Collaboration state ───────────────────────────────────────
 -- presences[adminId] = { name, color, deptKey, lastSeen }
@@ -39,17 +50,6 @@ local function getVersions()
         result[#result + 1] = { key = k, updatedAt = m.updatedAt, updatedBy = m.updatedBy }
     end
     return result
-end
-
--- ── Permission check ──────────────────────────────────────────
-
-local function isAdmin(source)
-    if IsPlayerAceAllowed(source, adminAce) then return true end
-    local Player = exports.qbx_core:GetPlayer(source)
-    if Player and (Player.PlayerData.group == 'admin' or Player.PlayerData.group == 'superadmin') then
-        return true
-    end
-    return false
 end
 
 -- ── Response helpers ──────────────────────────────────────────
@@ -166,6 +166,8 @@ SetHttpHandler(function(req, res)
                         exported.updatedAt = DeptMeta[saveKey].updatedAt
                         exported.updatedBy = DeptMeta[saveKey].updatedBy
                         TriggerClientEvent('d4rk_emergency:client:configUpdated', -1, saveKey, exported)
+                        Log(('Dept "%s" saved via browser panel'):format(saveKey), 'success',
+                            { savedBy = data._savedBy or 'unknown' })
                         jsonRes(res, 200, { success = true, updatedAt = DeptMeta[saveKey].updatedAt })
                     else
                         jsonRes(res, 500, { success = false, error = 'DB save failed' })
@@ -188,6 +190,7 @@ SetHttpHandler(function(req, res)
             DeptMeta[delKey]     = nil
             MySQL.update('DELETE FROM `d4rk_emergency_departments` WHERE dept_key = ?', { delKey })
             TriggerClientEvent('d4rk_emergency:client:deptDeleted', -1, delKey)
+            Log(('Dept "%s" deleted via browser panel'):format(delKey), 'warn')
             jsonRes(res, 200, { success = true })
             return
         end
@@ -199,17 +202,17 @@ end)
 -- ── NUI Callbacks ─────────────────────────────────────────────
 
 lib.callback.register('d4rk_emergency:admin:getDepts', function(source)
-    if not isAdmin(source) then return nil, 'Access denied' end
+    if not IsAdmin(source) then return nil, 'Access denied' end
     return getAllDepts()
 end)
 
 lib.callback.register('d4rk_emergency:admin:getStatus', function(source)
-    if not isAdmin(source) then return nil end
+    if not IsAdmin(source) then return nil end
     return { editors = getEditors(), versions = getVersions() }
 end)
 
 lib.callback.register('d4rk_emergency:admin:presence', function(source, data)
-    if not isAdmin(source) then return false end
+    if not IsAdmin(source) then return false end
     if data and data.adminId then
         presences[data.adminId] = {
             name     = data.name    or 'Admin',
@@ -222,7 +225,7 @@ lib.callback.register('d4rk_emergency:admin:presence', function(source, data)
 end)
 
 lib.callback.register('d4rk_emergency:admin:saveDept', function(source, deptKey, data)
-    if not isAdmin(source) then return { success = false, error = 'Access denied' } end
+    if not IsAdmin(source) then return { success = false, error = 'Access denied' } end
     if type(data) ~= 'table' then return { success = false, error = 'Invalid data' } end
 
     DB.ApplyToActiveConfig(deptKey, data)
@@ -234,18 +237,21 @@ lib.callback.register('d4rk_emergency:admin:saveDept', function(source, deptKey,
         exported.updatedAt = DeptMeta[deptKey].updatedAt
         exported.updatedBy = DeptMeta[deptKey].updatedBy
         TriggerClientEvent('d4rk_emergency:client:configUpdated', -1, deptKey, exported)
+        Log(('Dept "%s" saved via NUI by %s'):format(deptKey, data._savedBy or 'unknown'), 'success')
         return { success = true, updatedAt = DeptMeta[deptKey].updatedAt }
     end
     return { success = false, error = 'DB save failed' }
 end)
 
 lib.callback.register('d4rk_emergency:admin:deleteDept', function(source, deptKey)
-    if not isAdmin(source) then return { success = false, error = 'Access denied' } end
+    if not IsAdmin(source) then return { success = false, error = 'Access denied' } end
     if not ActiveConfig[deptKey] then return { success = false, error = 'Not found' } end
 
     ActiveConfig[deptKey] = nil
     DeptMeta[deptKey]     = nil
     DB.DeleteAwait(deptKey)
     TriggerClientEvent('d4rk_emergency:client:deptDeleted', -1, deptKey)
+    Log(('Dept "%s" deleted via NUI by %s'):format(
+        deptKey, exports['d4rk_core']:GetPlayerName(source)), 'warn')
     return { success = true }
 end)
