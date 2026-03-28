@@ -10,9 +10,9 @@ local adminAce   = Config.Admin.Ace
 
 -- ── Collaboration state ───────────────────────────────────────
 -- presences[adminId] = { name, color, deptKey, lastSeen }
+-- DeptMeta is defined as a global in db.lua and seeded in DB.LoadAll
+
 local presences = {}
--- deptMeta[deptKey]  = { updatedAt, updatedBy }
-local deptMeta  = {}
 
 local function cleanPresences()
     local now = os.time()
@@ -35,28 +35,24 @@ end
 
 local function getVersions()
     local result = {}
-    for k, m in pairs(deptMeta) do
+    for k, m in pairs(DeptMeta) do
         result[#result + 1] = { key = k, updatedAt = m.updatedAt, updatedBy = m.updatedBy }
     end
     return result
 end
 
--- ── Permission check ─────────────────────────────────────────
+-- ── Permission check ──────────────────────────────────────────
 
 local function isAdmin(source)
-    -- Ace check (Standard)
     if IsPlayerAceAllowed(source, adminAce) then return true end
-
-    -- Fallback: QBX Gruppe
     local Player = exports.qbx_core:GetPlayer(source)
     if Player and (Player.PlayerData.group == 'admin' or Player.PlayerData.group == 'superadmin') then
         return true
     end
-
     return false
 end
 
--- ── Response helpers ─────────────────────────────────────────
+-- ── Response helpers ──────────────────────────────────────────
 
 local function jsonRes(res, code, data)
     res.writeHead(code, {
@@ -77,10 +73,9 @@ local function getAllDepts()
     local list = {}
     for k, v in pairs(ActiveConfig) do
         local exported = DB.ExportDept(k, v)
-        -- Attach meta
-        if deptMeta[k] then
-            exported.updatedAt = deptMeta[k].updatedAt
-            exported.updatedBy = deptMeta[k].updatedBy
+        if DeptMeta[k] then
+            exported.updatedAt = DeptMeta[k].updatedAt
+            exported.updatedBy = DeptMeta[k].updatedBy
         end
         list[#list + 1] = exported
     end
@@ -96,14 +91,14 @@ SetHttpHandler(function(req, res)
     local path   = req.path   or '/'
     local method = req.method or 'GET'
 
-    -- Serve panel HTML
+    -- ── Serve panel HTML ────────────────────────────────────
     if method == 'GET' and (path == '/' or path == '' or path == '/admin') then
         res.writeHead(200, { ['Content-Type'] = 'text/html; charset=utf-8' })
         res.send(adminHtml or '<h1>Not found</h1>')
         return
     end
 
-    -- CORS preflight
+    -- ── CORS preflight ──────────────────────────────────────
     if method == 'OPTIONS' then
         res.writeHead(204, {
             ['Access-Control-Allow-Origin']  = '*',
@@ -114,7 +109,7 @@ SetHttpHandler(function(req, res)
         return
     end
 
-    -- Auth check
+    -- ── Auth check ──────────────────────────────────────────
     if not checkToken(req) then
         jsonRes(res, 401, { success = false, error = 'Unauthorized' })
         return
@@ -152,52 +147,56 @@ SetHttpHandler(function(req, res)
     end
 
     -- ── POST /api/departments/:key ──────────────────────────
-    local saveKey = path:match('^/api/departments/(.+)$')
-    if method == 'POST' and saveKey then
-        req.setDataHandler(function(body)
-            local ok, data = pcall(json.decode, body)
-            if not ok or type(data) ~= 'table' then
-                jsonRes(res, 400, { success = false, error = 'Invalid JSON' })
-                return
-            end
-
-            DB.ApplyToActiveConfig(saveKey, data)
-            deptMeta[saveKey] = { updatedAt = os.time(), updatedBy = data._savedBy or 'Admin' }
-
-            DB.Save(saveKey, ActiveConfig[saveKey], function(saved)
-                if saved then
-                    local exported = DB.ExportDept(saveKey, ActiveConfig[saveKey])
-                    exported.updatedAt = deptMeta[saveKey].updatedAt
-                    exported.updatedBy = deptMeta[saveKey].updatedBy
-                    TriggerClientEvent('d4rk_emergency:client:configUpdated', -1, saveKey, exported)
-                    jsonRes(res, 200, { success = true, updatedAt = deptMeta[saveKey].updatedAt })
-                else
-                    jsonRes(res, 500, { success = false, error = 'DB save failed' })
+    if method == 'POST' then
+        local saveKey = path:match('^/api/departments/(.+)$')
+        if saveKey then
+            req.setDataHandler(function(body)
+                local ok, data = pcall(json.decode, body)
+                if not ok or type(data) ~= 'table' then
+                    jsonRes(res, 400, { success = false, error = 'Invalid JSON' })
+                    return
                 end
+
+                DB.ApplyToActiveConfig(saveKey, data)
+                DeptMeta[saveKey] = { updatedAt = os.time(), updatedBy = data._savedBy or 'Admin' }
+
+                DB.Save(saveKey, ActiveConfig[saveKey], function(saved)
+                    if saved then
+                        local exported = DB.ExportDept(saveKey, ActiveConfig[saveKey])
+                        exported.updatedAt = DeptMeta[saveKey].updatedAt
+                        exported.updatedBy = DeptMeta[saveKey].updatedBy
+                        TriggerClientEvent('d4rk_emergency:client:configUpdated', -1, saveKey, exported)
+                        jsonRes(res, 200, { success = true, updatedAt = DeptMeta[saveKey].updatedAt })
+                    else
+                        jsonRes(res, 500, { success = false, error = 'DB save failed' })
+                    end
+                end)
             end)
-        end)
-        return
+            return
+        end
     end
 
     -- ── DELETE /api/departments/:key ────────────────────────
-    local delKey = path:match('^/api/departments/(.+)$')
-    if method == 'DELETE' and delKey then
-        if not ActiveConfig[delKey] then
-            jsonRes(res, 404, { success = false, error = 'Not found' })
+    if method == 'DELETE' then
+        local delKey = path:match('^/api/departments/(.+)$')
+        if delKey then
+            if not ActiveConfig[delKey] then
+                jsonRes(res, 404, { success = false, error = 'Not found' })
+                return
+            end
+            ActiveConfig[delKey] = nil
+            DeptMeta[delKey]     = nil
+            MySQL.update('DELETE FROM `d4rk_emergency_departments` WHERE dept_key = ?', { delKey })
+            TriggerClientEvent('d4rk_emergency:client:deptDeleted', -1, delKey)
+            jsonRes(res, 200, { success = true })
             return
         end
-        ActiveConfig[delKey] = nil
-        deptMeta[delKey]     = nil
-        MySQL.update('DELETE FROM `d4rk_emergency_departments` WHERE dept_key = ?', { delKey })
-        TriggerClientEvent('d4rk_emergency:client:deptDeleted', -1, delKey)
-        jsonRes(res, 200, { success = true })
-        return
     end
 
     jsonRes(res, 404, { success = false, error = 'Not found' })
 end)
 
--- ── NUI Callbacks ────────────────────────────────────────────
+-- ── NUI Callbacks ─────────────────────────────────────────────
 
 lib.callback.register('d4rk_emergency:admin:getDepts', function(source)
     if not isAdmin(source) then return nil, 'Access denied' end
@@ -227,15 +226,15 @@ lib.callback.register('d4rk_emergency:admin:saveDept', function(source, deptKey,
     if type(data) ~= 'table' then return { success = false, error = 'Invalid data' } end
 
     DB.ApplyToActiveConfig(deptKey, data)
-    deptMeta[deptKey] = { updatedAt = os.time(), updatedBy = data._savedBy or 'Admin' }
+    DeptMeta[deptKey] = { updatedAt = os.time(), updatedBy = data._savedBy or 'Admin' }
 
     local saved = DB.SaveAwait(deptKey, ActiveConfig[deptKey])
     if saved then
         local exported = DB.ExportDept(deptKey, ActiveConfig[deptKey])
-        exported.updatedAt = deptMeta[deptKey].updatedAt
-        exported.updatedBy = deptMeta[deptKey].updatedBy
+        exported.updatedAt = DeptMeta[deptKey].updatedAt
+        exported.updatedBy = DeptMeta[deptKey].updatedBy
         TriggerClientEvent('d4rk_emergency:client:configUpdated', -1, deptKey, exported)
-        return { success = true, updatedAt = deptMeta[deptKey].updatedAt }
+        return { success = true, updatedAt = DeptMeta[deptKey].updatedAt }
     end
     return { success = false, error = 'DB save failed' }
 end)
@@ -245,7 +244,7 @@ lib.callback.register('d4rk_emergency:admin:deleteDept', function(source, deptKe
     if not ActiveConfig[deptKey] then return { success = false, error = 'Not found' } end
 
     ActiveConfig[deptKey] = nil
-    deptMeta[deptKey]     = nil
+    DeptMeta[deptKey]     = nil
     DB.DeleteAwait(deptKey)
     TriggerClientEvent('d4rk_emergency:client:deptDeleted', -1, deptKey)
     return { success = true }

@@ -3,9 +3,11 @@
 --  Handles vec3/vec4 serialization to/from plain JSON tables
 -- ============================================================
 
-DB = {}  -- global so main.lua and admin.lua can use it
+DB       = {}    -- global: used by main.lua and admin.lua
+DeptMeta = {}    -- global: { [deptKey] = { updatedAt, updatedBy } }
+                 -- seeded on LoadAll so version tracking works from first poll
 
--- ── Vec helpers ─────────────────────────────────────────────
+-- ── Vec helpers ───────────────────────────────────────────────
 
 local function v3Encode(v)
     if not v then return nil end
@@ -55,7 +57,7 @@ local function decodeZone(z, hasSpawn)
     return zone
 end
 
--- ── Serialization ────────────────────────────────────────────
+-- ── Serialization ─────────────────────────────────────────────
 
 local function encodeDept(deptKey, dept)
     local configData = {
@@ -63,17 +65,17 @@ local function encodeDept(deptKey, dept)
         cloakroomZone = encodeZone(dept.cloakroomZone),
         armoryZone    = encodeZone(dept.armoryZone),
         garageZone    = encodeZone(dept.garageZone, true),
-        grades        = dept.grades    or {},
-        armory        = dept.armory    or {},
-        vehicles      = dept.vehicles  or {},
-        outfits       = dept.outfits   or { male = {}, female = {} },
+        grades        = dept.grades   or {},
+        armory        = dept.armory   or {},
+        vehicles      = dept.vehicles or {},
+        outfits       = dept.outfits  or { male = {}, female = {} },
     }
     return {
         dept_key    = deptKey,
-        label       = dept.label       or '',
-        short_label = dept.shortLabel  or '',
-        job_name    = dept.jobName     or '',
-        color       = dept.color       or '#FFFFFF',
+        label       = dept.label      or '',
+        short_label = dept.shortLabel or '',
+        job_name    = dept.jobName    or '',
+        color       = dept.color      or '#FFFFFF',
         config_json = json.encode(configData),
     }
 end
@@ -102,8 +104,6 @@ end
 
 -- ── Public API ────────────────────────────────────────────────
 
--- Returns all depts as { [deptKey] = deptTable, ... }
--- deptTables have proper vec3/vec4 in zone fields
 function DB.LoadAll(cb)
     MySQL.query('SELECT * FROM `d4rk_emergency_departments`', {}, function(rows)
         local result = {}
@@ -115,11 +115,20 @@ function DB.LoadAll(cb)
                 end
             end
         end
+
+        -- Seed DeptMeta with baseline timestamps so the version tracking
+        -- in the poll loop works correctly from the very first status request.
+        local startTime = os.time()
+        for key in pairs(result) do
+            if not DeptMeta[key] then
+                DeptMeta[key] = { updatedAt = startTime, updatedBy = 'server' }
+            end
+        end
+
         cb(result)
     end)
 end
 
--- Upsert a department (awaitable version for use in coroutines)
 function DB.Save(deptKey, dept, cb)
     local row = encodeDept(deptKey, dept)
     MySQL.update(
@@ -165,7 +174,7 @@ function DB.DeleteAwait(deptKey)
 end
 
 -- ── Export helper ─────────────────────────────────────────────
--- Returns a plain-table version of a dept (safe for json.encode / NUI / HTTP)
+-- Returns a plain-table version safe for json.encode / NUI / HTTP
 
 function DB.ExportDept(deptKey, dept)
     local function ev3(v) return v and { x = v.x, y = v.y, z = v.z } or nil end
@@ -192,7 +201,8 @@ function DB.ExportDept(deptKey, dept)
     }
 end
 
--- Applies plain-table data (from JSON/NUI) back into ActiveConfig format (with vec3)
+-- Applies plain-table data (from JSON/NUI) back into ActiveConfig with vec3/vec4
+
 function DB.ApplyToActiveConfig(deptKey, data)
     local function mkv3(t)
         if not t then return vec3(0, 0, 0) end
@@ -204,7 +214,12 @@ function DB.ApplyToActiveConfig(deptKey, data)
     end
     local function mkZone(z, sp)
         if not z then return nil end
-        local zone = { coords = mkv3(z.coords), size = mkv3(z.size), rotation = z.rotation or 0, label = z.label or '' }
+        local zone = {
+            coords   = mkv3(z.coords),
+            size     = mkv3(z.size),
+            rotation = z.rotation or 0,
+            label    = z.label or '',
+        }
         if sp and z.spawnPoint then zone.spawnPoint = mkv4(z.spawnPoint) end
         return zone
     end
