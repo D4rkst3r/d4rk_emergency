@@ -821,7 +821,7 @@ function submitNewDept() {
     cloakroomZone: {coords:{x:0,y:0,z:0},size:{x:1.5,y:1.5,z:2},rotation:0,label:'Locker Room'},
     armoryZone:    {coords:{x:0,y:0,z:0},size:{x:1.5,y:1.5,z:2},rotation:0,label:'Armory'},
     garageZone:    {coords:{x:0,y:0,z:0},size:{x:3,y:3,z:2},rotation:0,label:'Garage',spawnPoint:{x:0,y:0,z:0,w:0}},
-    grades:{0:{label:'Recruit',salary:500}}, armory:[], vehicles:[], blips:[],
+    grades:{0:{label:'Recruit',salary:500}}, armory:[], vehicles:[], blips:[], platePrefix:'',
   });
   selectDept(k);
 }
@@ -855,6 +855,13 @@ function tabInfo() {
         <input value="${esc(d.jobName)}" oninput="draftDept.jobName=this.value" placeholder="police / ambulance / firefdept" /></div>
       <div class="f" style="width:110px"><label>Color</label>
         <input type="color" value="${d.color}" oninput="draftDept.color=this.value;updH()" /></div>
+    </div>
+    <div class="frow">
+      <div class="f" style="width:140px">
+        <label>Plate Prefix <span style="color:var(--muted);font-weight:400">(max 4)</span></label>
+        <input value="${esc(d.platePrefix||'')}" maxlength="4" placeholder="z.B. SAPD"
+          oninput="draftDept.platePrefix=this.value.toUpperCase().slice(0,4)" />
+      </div>
     </div>`;
 }
 function updH() {
@@ -866,22 +873,67 @@ function updH() {
   b.style.color = draftDept.color;
 }
 
+// ── REPLACE the existing tabZones() function in html/admin/index.html ──
+// Find: "function tabZones() {"  and replace the entire function with this:
+
+// ── Ersetze die komplette tabZones() Funktion in index.html ──
+
 function tabZones() {
   const zc = (name, icon, key, sp) => {
-    const z = draftDept[key] || {};
-    const c = z.coords||{x:0,y:0,z:0};
-    const s = z.size||{x:1.5,y:1.5,z:2};
-    const p = z.spawnPoint||{x:0,y:0,z:0,w:0};
+    const z   = draftDept[key] || {};
+    const c   = z.coords     || {x:0,y:0,z:0};
+    const s   = z.size       || {x:1.5,y:1.5,z:2};
+    const p   = z.spawnPoint || {x:0,y:0,z:0,w:0};
+    const ped = z.ped         || '';
+    const ped_scenario = z.pedScenario || '';
+    const prop = z.prop       || '';
+
+    // Mode indicator
+    let modeTag = '';
+    if (ped)       modeTag = `<span style="background:rgba(91,141,239,.12);color:var(--a1);border:1px solid rgba(91,141,239,.25);border-radius:4px;padding:1px 7px;font-size:10px;font-weight:700">🧍 PED</span>`;
+    else if (prop) modeTag = `<span style="background:rgba(45,212,160,.1);color:var(--ok);border:1px solid rgba(45,212,160,.2);border-radius:4px;padding:1px 7px;font-size:10px;font-weight:700">📦 PROP</span>`;
+    else           modeTag = `<span style="background:rgba(74,83,112,.15);color:var(--muted);border:1px solid var(--border);border-radius:4px;padding:1px 7px;font-size:10px;font-weight:700">⬜ BOXZONE</span>`;
+
     return `<div class="zone-card">
       <div class="zone-head">
         <div class="zone-icon">${icon}</div>
         <h4>${name}</h4>
+        <div style="margin-left:auto">${modeTag}</div>
       </div>
+
       <div class="frow">
-        <div class="f grow"><label>Label</label><input value="${esc(z.label||'')}" oninput="sz('${key}','label',this.value)" /></div>
-        <div class="f" style="width:75px"><label>Rotation</label><input type="number" value="${z.rotation||0}" oninput="sz('${key}','rotation',+this.value)" /></div>
+        <div class="f grow"><label>Label</label>
+          <input value="${esc(z.label||'')}" oninput="sz('${key}','label',this.value)" /></div>
+        <div class="f" style="width:75px"><label>Rotation</label>
+          <input type="number" value="${z.rotation||0}" oninput="sz('${key}','rotation',+this.value)" /></div>
       </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;margin-bottom:6px">
+
+      <div style="background:var(--s2);border:1px solid var(--border);border-radius:var(--r2);padding:10px 12px;margin-bottom:10px">
+        <div class="slabel" style="margin-bottom:8px">Interaction Type — wähle Ped ODER Prop (nicht beides)</div>
+
+        <div class="frow" style="margin-bottom:6px">
+          <div class="f grow">
+            <label>🧍 Ped Model <span style="color:var(--muted);font-weight:400">(Priorität 1)</span></label>
+            <input value="${esc(ped)}" placeholder="z.B. s_m_y_cop_01"
+              oninput="sz('${key}','ped',this.value);refreshModeTag('${key}')" />
+          </div>
+          <div class="f grow">
+            <label>Ped Scenario <span style="color:var(--muted);font-weight:400">(optional)</span></label>
+            <input value="${esc(ped_scenario)}" placeholder="z.B. WORLD_HUMAN_CLIPBOARD"
+              oninput="sz('${key}','pedScenario',this.value)" />
+          </div>
+        </div>
+
+        <div class="frow" style="margin-bottom:0">
+          <div class="f grow">
+            <label>📦 Prop Model <span style="color:var(--muted);font-weight:400">(Priorität 2 — nur wenn kein Ped)</span></label>
+            <input value="${esc(prop)}" placeholder="z.B. prop_cs_clipboard"
+              oninput="sz('${key}','prop',this.value);refreshModeTag('${key}')" />
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
         <div class="slabel" style="margin:0">Coords</div>
         ${IS_NUI
           ? `<button class="btn-del" title="Use my position" onclick="fillZoneFromPos('${key}')" style="font-size:13px;padding:2px 6px">📍 My Position</button>`
@@ -892,12 +944,14 @@ function tabZones() {
         <div class="f"><label>Y</label><input id="zy_${key}" type="number" step="0.01" value="${c.y||0}" oninput="sv('${key}','coords','y',+this.value)" /></div>
         <div class="f"><label>Z</label><input id="zz_${key}" type="number" step="0.01" value="${c.z||0}" oninput="sv('${key}','coords','z',+this.value)" /></div>
       </div>
-      <div class="slabel" style="margin-top:10px;margin-bottom:6px">Size</div>
+
+      <div class="slabel" style="margin-top:10px;margin-bottom:6px">Size <span style="color:var(--muted);font-weight:400">(nur für BoxZone)</span></div>
       <div class="vrow">
         <div class="f"><label>X</label><input type="number" step="0.1" value="${s.x||1.5}" oninput="sv('${key}','size','x',+this.value)" /></div>
         <div class="f"><label>Y</label><input type="number" step="0.1" value="${s.y||1.5}" oninput="sv('${key}','size','y',+this.value)" /></div>
         <div class="f"><label>Z</label><input type="number" step="0.1" value="${s.z||2}"   oninput="sv('${key}','size','z',+this.value)" /></div>
       </div>
+
       ${sp ? `<div class="slabel" style="margin-top:10px;margin-bottom:6px">Spawn Point</div>
       <div class="vrow">
         <div class="f"><label>X</label><input type="number" step="0.01" value="${p.x||0}" oninput="sv('${key}','spawnPoint','x',+this.value)" /></div>
@@ -905,7 +959,8 @@ function tabZones() {
         <div class="f"><label>Z</label><input type="number" step="0.01" value="${p.z||0}" oninput="sv('${key}','spawnPoint','z',+this.value)" /></div>
         <div class="f"><label>Heading</label><input type="number" step="1" value="${p.w||0}" oninput="sv('${key}','spawnPoint','w',+this.value)" /></div>
       </div>` : ''}
-      <div class="zone-warn">✅ Zone changes (coords, size, rotation) apply live. No restart needed.</div>
+
+      <div class="zone-warn">✅ Ped / Prop / Zone changes apply live. No restart needed.</div>
     </div>`;
   };
   return `<div class="zone-grid">
@@ -914,6 +969,13 @@ function tabZones() {
     ${zc('Armory','🔫','armoryZone')}
     ${zc('Garage','🚘','garageZone',true)}
   </div>`;
+}
+
+// ── Füge diese Hilfsfunktion ebenfalls hinzu (z.B. nach sz/sv) ──
+// Aktualisiert den Mode-Tag live wenn Ped/Prop geändert wird
+function refreshModeTag(key) {
+  // Re-render the zones tab to update the mode indicator
+  if (activeTab === 'zones') switchTab('zones');
 }
 function sz(k,f,v){ if(!draftDept[k])draftDept[k]={};draftDept[k][f]=v; }
 function sv(k,vf,a,v){ if(!draftDept[k])draftDept[k]={};if(!draftDept[k][vf])draftDept[k][vf]={};draftDept[k][vf][a]=v; }
@@ -955,18 +1017,64 @@ function tabArmory() {
 }
 
 function tabVehicles() {
-  const rows=(draftDept.vehicles||[]).map((v,i)=>`<tr>
-    <td><input value="${esc(v.model)}" oninput="draftDept.vehicles[${i}].model=this.value" placeholder="police" /></td>
-    <td><input value="${esc(v.label)}" oninput="draftDept.vehicles[${i}].label=this.value" placeholder="Patrol Cruiser" /></td>
-    <td style="width:90px"><input type="number" value="${v.grade}" min="0" oninput="draftDept.vehicles[${i}].grade=+this.value" /></td>
-    <td style="width:36px"><button class="btn-del" onclick="draftDept.vehicles.splice(${i},1);switchTab('vehicles')">✕</button></td>
+  const rows = (draftDept.vehicles || []).map((v, i) => `<tr>
+    <td><input value="${esc(v.model)}"  oninput="draftDept.vehicles[${i}].model=this.value"  placeholder="police" /></td>
+    <td><input value="${esc(v.label)}"  oninput="draftDept.vehicles[${i}].label=this.value"  placeholder="Patrol Cruiser" /></td>
+    <td style="width:75px">
+      <input type="number" value="${v.grade||0}" min="0"
+        oninput="draftDept.vehicles[${i}].grade=+this.value" /></td>
+    <td style="width:75px">
+      <input type="number" value="${v.maxCount||1}" min="1" title="Fleet size"
+        oninput="draftDept.vehicles[${i}].maxCount=+this.value" /></td>
+    <td style="width:75px">
+      <input type="number" value="${v.orderGrade!=null?v.orderGrade:6}" min="0" title="Min grade to order more"
+        oninput="draftDept.vehicles[${i}].orderGrade=+this.value" /></td>
+    <td style="width:60px">
+      <input type="number" value="${v.livery!=null?v.livery:-1}" min="-1" title="Livery index (-1 = none)"
+        oninput="draftDept.vehicles[${i}].livery=+this.value" /></td>
+    <td style="width:60px">
+      <input type="number" value="${v.color1!=null?v.color1:''}" min="0" max="159" placeholder="—" title="Primary color index"
+        oninput="draftDept.vehicles[${i}].color1=this.value===''?null:+this.value" /></td>
+    <td style="width:60px">
+      <input type="number" value="${v.color2!=null?v.color2:''}" min="0" max="159" placeholder="—" title="Secondary color index"
+        oninput="draftDept.vehicles[${i}].color2=this.value===''?null:+this.value" /></td>
+    <td style="width:100px">
+      <input value="${esc((v.extrasOn||[]).join(','))}" placeholder="1,2,3" title="Extras ON (comma-separated)"
+        oninput="draftDept.vehicles[${i}].extrasOn=this.value.split(',').map(n=>+n.trim()).filter(n=>n>0)" /></td>
+    <td style="width:100px">
+      <input value="${esc((v.extrasOff||[]).join(','))}" placeholder="4,5" title="Extras OFF (comma-separated)"
+        oninput="draftDept.vehicles[${i}].extrasOff=this.value.split(',').map(n=>+n.trim()).filter(n=>n>0)" /></td>
+    <td style="width:36px">
+      <button class="btn-del" onclick="draftDept.vehicles.splice(${i},1);switchTab('vehicles')">✕</button></td>
   </tr>`).join('');
-  return `<div class="slabel">Available Vehicles</div>
-    <div class="twrap"><table class="te">
-      <thead><tr><th>Model Name</th><th>Display Label</th><th>Min Grade</th><th></th></tr></thead>
+ 
+  return `
+    <div class="slabel">Available Vehicles</div>
+    <div style="background:var(--s2);border:1px solid var(--border);border-radius:var(--r2);padding:8px 12px;margin-bottom:10px;font-size:11px;color:var(--sub)">
+      💡 <strong>Fleet Size</strong> = how many exist in total.
+      <strong>Order Grade</strong> = min rank to purchase more.
+      <strong>Livery</strong> -1 = default.
+      <strong>Extras ON/OFF</strong> = comma-separated extra IDs.
+    </div>
+    <div class="twrap" style="overflow-x:auto"><table class="te">
+      <thead><tr>
+        <th>Model</th>
+        <th>Label</th>
+        <th title="Min grade to use">Grade</th>
+        <th title="Total fleet size">Fleet</th>
+        <th title="Min grade to order more">Order</th>
+        <th title="Livery index">Livery</th>
+        <th title="Primary color (0-159)">Col 1</th>
+        <th title="Secondary color (0-159)">Col 2</th>
+        <th title="Extras to enable">Extra ON</th>
+        <th title="Extras to disable">Extra OFF</th>
+        <th></th>
+      </tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
-    <button class="btn-add" onclick="draftDept.vehicles.push({model:'',label:'',grade:0});switchTab('vehicles')">＋ Add Vehicle</button>`;
+    <button class="btn-add" onclick="draftDept.vehicles.push({model:'',label:'',grade:0,maxCount:1,orderGrade:6,livery:-1,color1:null,color2:null,extrasOn:[],extrasOff:[]});switchTab('vehicles')">
+      ＋ Add Vehicle
+    </button>`;
 }
 
 // ── Tab: Blips ────────────────────────────────────────────────

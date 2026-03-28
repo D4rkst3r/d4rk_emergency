@@ -3,10 +3,8 @@
 --  Handles vec3/vec4 serialization to/from plain JSON tables
 -- ============================================================
 
-DB       = {}    -- global: used by main.lua and admin.lua
-DeptMeta = {}    -- global: { [deptKey] = { updatedAt, updatedBy } }
-
--- ── Vec helpers ───────────────────────────────────────────────
+DB       = {}
+DeptMeta = {}
 
 local function v3Encode(v)
     if not v then return nil end
@@ -31,10 +29,13 @@ end
 local function encodeZone(zone, hasSpawn)
     if not zone then return nil end
     local z = {
-        coords   = v3Encode(zone.coords),
-        size     = v3Encode(zone.size),
-        rotation = zone.rotation or 0,
-        label    = zone.label or '',
+        coords      = v3Encode(zone.coords),
+        size        = v3Encode(zone.size),
+        rotation    = zone.rotation    or 0,
+        label       = zone.label       or '',
+        prop        = zone.prop        or '',
+        ped         = zone.ped         or '',
+        pedScenario = zone.pedScenario or '',
     }
     if hasSpawn then z.spawnPoint = v4Encode(zone.spawnPoint) end
     return z
@@ -43,10 +44,13 @@ end
 local function decodeZone(z, hasSpawn)
     if not z then return nil end
     local zone = {
-        coords   = v3Decode(z.coords),
-        size     = v3Decode(z.size),
-        rotation = z.rotation or 0,
-        label    = z.label or '',
+        coords      = v3Decode(z.coords),
+        size        = v3Decode(z.size),
+        rotation    = z.rotation    or 0,
+        label       = z.label       or '',
+        prop        = z.prop        or '',
+        ped         = z.ped         or '',
+        pedScenario = z.pedScenario or '',
     }
     if hasSpawn and z.spawnPoint then
         zone.spawnPoint = v4Decode(z.spawnPoint)
@@ -54,7 +58,6 @@ local function decodeZone(z, hasSpawn)
     return zone
 end
 
--- Blips keep plain-table coords (no vec3 needed — client passes x,y,z directly)
 local function encodeBlips(blips)
     if not blips then return {} end
     local out = {}
@@ -87,10 +90,9 @@ local function decodeBlips(blips)
     return out
 end
 
--- ── Serialization ─────────────────────────────────────────────
-
 local function encodeDept(deptKey, dept)
     local configData = {
+        platePrefix   = dept.platePrefix  or '',   -- ← in config_json gespeichert
         dutyZone      = encodeZone(dept.dutyZone),
         cloakroomZone = encodeZone(dept.cloakroomZone),
         armoryZone    = encodeZone(dept.armoryZone),
@@ -122,6 +124,7 @@ local function decodeDept(row)
         shortLabel    = row.short_label,
         jobName       = row.job_name,
         color         = row.color,
+        platePrefix   = parsed.platePrefix  or '',   -- ← aus config_json lesen
         dutyZone      = decodeZone(parsed.dutyZone),
         cloakroomZone = decodeZone(parsed.cloakroomZone),
         armoryZone    = decodeZone(parsed.armoryZone),
@@ -134,8 +137,6 @@ local function decodeDept(row)
     }
 end
 
--- ── Public API ────────────────────────────────────────────────
-
 function DB.LoadAll(cb)
     MySQL.query('SELECT * FROM `d4rk_emergency_departments`', {}, function(rows)
         local result = {}
@@ -145,7 +146,6 @@ function DB.LoadAll(cb)
                 if dept then result[row.dept_key] = dept end
             end
         end
-        -- Seed baseline timestamps so version tracking works from first poll
         local startTime = os.time()
         for key in pairs(result) do
             if not DeptMeta[key] then
@@ -200,13 +200,20 @@ function DB.DeleteAwait(deptKey)
     return affected and affected > 0
 end
 
--- Returns plain-table dept safe for json.encode / NUI / HTTP
 function DB.ExportDept(deptKey, dept)
     local function ev3(v) return v and { x = v.x, y = v.y, z = v.z } or nil end
     local function ev4(v) return v and { x = v.x, y = v.y, z = v.z, w = v.w } or nil end
     local function ez(z, sp)
         if not z then return nil end
-        local t = { coords = ev3(z.coords), size = ev3(z.size), rotation = z.rotation, label = z.label }
+        local t = {
+            coords      = ev3(z.coords),
+            size        = ev3(z.size),
+            rotation    = z.rotation,
+            label       = z.label,
+            prop        = z.prop        or '',
+            ped         = z.ped         or '',
+            pedScenario = z.pedScenario or '',
+        }
         if sp then t.spawnPoint = ev4(z.spawnPoint) end
         return t
     end
@@ -216,6 +223,7 @@ function DB.ExportDept(deptKey, dept)
         shortLabel    = dept.shortLabel,
         jobName       = dept.jobName,
         color         = dept.color,
+        platePrefix   = dept.platePrefix  or '',   -- ← für NUI / HTTP
         dutyZone      = ez(dept.dutyZone),
         cloakroomZone = ez(dept.cloakroomZone),
         armoryZone    = ez(dept.armoryZone),
@@ -227,7 +235,6 @@ function DB.ExportDept(deptKey, dept)
     }
 end
 
--- Applies plain-table data (from JSON/NUI) back into ActiveConfig with vec3/vec4
 function DB.ApplyToActiveConfig(deptKey, data)
     local function mkv3(t)
         if not t then return vec3(0, 0, 0) end
@@ -239,7 +246,15 @@ function DB.ApplyToActiveConfig(deptKey, data)
     end
     local function mkZone(z, sp)
         if not z then return nil end
-        local zone = { coords = mkv3(z.coords), size = mkv3(z.size), rotation = z.rotation or 0, label = z.label or '' }
+        local zone = {
+            coords      = mkv3(z.coords),
+            size        = mkv3(z.size),
+            rotation    = z.rotation    or 0,
+            label       = z.label       or '',
+            prop        = z.prop        or '',
+            ped         = z.ped         or '',
+            pedScenario = z.pedScenario or '',
+        }
         if sp and z.spawnPoint then zone.spawnPoint = mkv4(z.spawnPoint) end
         return zone
     end
@@ -257,10 +272,11 @@ function DB.ApplyToActiveConfig(deptKey, data)
     end
 
     ActiveConfig[deptKey] = {
-        label         = data.label      or '',
-        shortLabel    = data.shortLabel or '',
-        jobName       = data.jobName    or '',
-        color         = data.color      or '#FFFFFF',
+        label         = data.label       or '',
+        shortLabel    = data.shortLabel  or '',
+        jobName       = data.jobName     or '',
+        color         = data.color       or '#FFFFFF',
+        platePrefix   = data.platePrefix or '',   -- ← aus NUI/HTTP übernehmen
         dutyZone      = mkZone(data.dutyZone),
         cloakroomZone = mkZone(data.cloakroomZone),
         armoryZone    = mkZone(data.armoryZone),

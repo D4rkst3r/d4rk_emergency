@@ -16,7 +16,7 @@ local function GetPlayerJob()
     return exports['d4rk_core']:GetPlayerJob()
 end
 
--- ── Vec helper (deptData from configUpdated has plain tables, not vec3) ──
+-- ── Vec helper ────────────────────────────────────────────────
 
 local function toVec3(v)
     if not v then return vec3(0, 0, 0) end
@@ -62,17 +62,85 @@ function RefreshDeptBlips(deptKey, deptData)
     CreateDeptBlips(deptKey, deptData)
 end
 
+-- ── Entity management ─────────────────────────────────────────
+
+local spawnedEntities = {}
+
+local function SpawnZoneProp(model, coords, rotation)
+    if not model or model == '' then return nil end
+    local hash = GetHashKey(model)
+    if not IsModelInCdimage(hash) then
+        print('[d4rk_emergency] Prop not in cdimage: ' .. model)
+        return nil
+    end
+    lib.requestModel(model)
+    local prop = CreateObjectNoOffset(hash, coords.x, coords.y, coords.z, false, false, false)
+    SetEntityAsMissionEntity(prop, true, true)
+    FreezeEntityPosition(prop, true)
+    SetEntityHeading(prop, rotation or 0)
+    SetModelAsNoLongerNeeded(hash)
+    return prop
+end
+
+local function SpawnZonePed(model, coords, rotation, scenario)
+    if not model or model == '' then return nil end
+    local hash = GetHashKey(model)
+    if not IsModelInCdimage(hash) then
+        print('[d4rk_emergency] Ped not in cdimage: ' .. model)
+        return nil
+    end
+    lib.requestModel(model)
+    local ped = CreatePed(4, hash, coords.x, coords.y, coords.z - 1.0, rotation or 0, false, true)
+    SetEntityAsMissionEntity(ped, true, true)
+    SetBlockingOfNonTemporaryEvents(ped, true)
+    SetEntityInvincible(ped, true)
+    SetPedDiesWhenInjured(ped, false)
+    SetPedCanRagdoll(ped, false)
+    FreezeEntityPosition(ped, true)
+    SetPedFleeAttributes(ped, 0, false)
+    SetPedCombatAttributes(ped, 17, true)
+    SetModelAsNoLongerNeeded(hash)
+    if scenario and scenario ~= '' then
+        TaskStartScenarioInPlace(ped, scenario, 0, true)
+    end
+    return ped
+end
+
+local function SpawnZoneEntity(zone)
+    local coords   = toVec3(zone.coords)
+    local rotation = zone.rotation or 0
+    if zone.ped and zone.ped ~= '' then
+        return SpawnZonePed(zone.ped, coords, rotation, zone.pedScenario)
+    elseif zone.prop and zone.prop ~= '' then
+        return SpawnZoneProp(zone.prop, coords, rotation)
+    end
+    return nil
+end
+
+local function DespawnDeptEntities(deptKey)
+    if not spawnedEntities[deptKey] then return end
+    for _, entity in pairs(spawnedEntities[deptKey]) do
+        if DoesEntityExist(entity) then
+            exports.ox_target:removeLocalEntity(entity)
+            DeleteEntity(entity)
+        end
+    end
+    spawnedEntities[deptKey] = nil
+end
+
 -- ── Zone management ───────────────────────────────────────────
 
 local registeredZones = {}
 
 local function RemoveDeptZones(deptKey)
     local names = registeredZones[deptKey]
-    if not names then return end
-    for _, name in pairs(names) do
-        exports.ox_target:removeZone(name)
+    if names then
+        for _, name in pairs(names) do
+            exports.ox_target:removeZone(name)
+        end
+        registeredZones[deptKey] = nil
     end
-    registeredZones[deptKey] = nil
+    DespawnDeptEntities(deptKey)
 end
 
 -- ── Utility ───────────────────────────────────────────────────
@@ -96,105 +164,120 @@ local function RegisterDeptZones(deptKey, dept)
         garage    = p .. 'garage',
     }
     registeredZones[deptKey] = names
+    spawnedEntities[deptKey] = {}
 
-    exports.ox_target:addBoxZone({
-        name     = names.duty,
-        coords   = toVec3(dept.dutyZone.coords),
-        size     = vec3(3.0, 3.0, 3.0),
-        rotation = dept.dutyZone.rotation or 0,
-        debug    = true,
-        options  = {
-            {
-                distance = 1.5,
-                label    = isOnDuty and ('Go Off Duty [%s]'):format(dept.shortLabel)
-                                     or ('Go On Duty [%s]'):format(dept.shortLabel),
-                icon     = isOnDuty and 'fas fa-sign-out-alt' or 'fas fa-sign-in-alt',
-                groups   = dept.jobName,
-                onSelect = function()
-                    TriggerServerEvent('d4rk_emergency:server:toggleDuty', deptKey)
-                end,
-            }
+    local function attachOptions(zoneKey, zoneData, options)
+        local entity = SpawnZoneEntity(zoneData)
+        if entity then
+            spawnedEntities[deptKey][zoneKey] = entity
+            exports.ox_target:addLocalEntity(entity, options)
+        else
+            exports.ox_target:addBoxZone({
+                name     = names[zoneKey],
+                coords   = toVec3(zoneData.coords),
+                size     = toVec3(zoneData.size),
+                rotation = zoneData.rotation or 0,
+                debug    = false,
+                options  = options,
+            })
+        end
+    end
+
+    -- ── Duty ──────────────────────────────────────────────────
+    attachOptions('duty', dept.dutyZone, {
+        {
+            distance = 2.0,
+            label    = isOnDuty and ('Go Off Duty [%s]'):format(dept.shortLabel)
+                                 or ('Go On Duty [%s]'):format(dept.shortLabel),
+            icon     = isOnDuty and 'fas fa-sign-out-alt' or 'fas fa-sign-in-alt',
+            groups   = dept.jobName,
+            onSelect = function()
+                TriggerServerEvent('d4rk_emergency:server:toggleDuty', deptKey)
+            end,
         }
     })
 
-    exports.ox_target:addBoxZone({
-        name     = names.cloakroom,
-        coords   = toVec3(dept.cloakroomZone.coords),
-        size     = toVec3(dept.cloakroomZone.size),
-        rotation = dept.cloakroomZone.rotation or 0,
-        options  = {
-            {
-                distance = 1.5,
-                label    = 'Change Uniform',
-                icon     = 'fas fa-tshirt',
-                groups   = dept.jobName,
-                onSelect = function()
-                    if not isOnDuty then
-                        Notify(dept.shortLabel, 'You must be on duty to change uniform.', 'error')
-                        return
-                    end
-                    OpenCloakroom(deptKey, dept)
-                end,
-            },
-            {
-                distance = 1.5,
-                label    = 'Remove Uniform',
-                icon     = 'fas fa-undo',
-                groups   = dept.jobName,
-                onSelect = function()
-                    exports['illenium-appearance']:restoreSavedOutfit()
-                    Notify(dept.shortLabel, 'Uniform removed.', 'inform')
-                end,
-            }
+    -- ── Cloakroom ─────────────────────────────────────────────
+    attachOptions('cloakroom', dept.cloakroomZone, {
+        {
+            distance = 2.0,
+            label    = 'Change Uniform',
+            icon     = 'fas fa-tshirt',
+            groups   = dept.jobName,
+            onSelect = function()
+                if not isOnDuty then
+                    Notify(dept.shortLabel, 'You must be on duty to change uniform.', 'error')
+                    return
+                end
+                OpenCloakroom(deptKey, dept)
+            end,
+        },
+        {
+            distance = 2.0,
+            label    = 'Remove Uniform',
+            icon     = 'fas fa-undo',
+            groups   = dept.jobName,
+            onSelect = function()
+                exports['illenium-appearance']:restoreSavedOutfit()
+                Notify(dept.shortLabel, 'Uniform removed.', 'inform')
+            end,
         }
     })
 
-    exports.ox_target:addBoxZone({
-        name     = names.armory,
-        coords   = toVec3(dept.armoryZone.coords),
-        size     = toVec3(dept.armoryZone.size),
-        rotation = dept.armoryZone.rotation or 0,
-        options  = {
-            {
-                distance = 1.5,
-                label    = 'Open Armory',
-                icon     = 'fas fa-shield-alt',
-                groups   = dept.jobName,
-                onSelect = function()
-                    if not isOnDuty then
-                        Notify(dept.shortLabel, 'You must be on duty to access the armory.', 'error')
-                        return
-                    end
-                    OpenArmoryMenu(deptKey, dept)
-                end,
-            }
+    -- ── Armory ────────────────────────────────────────────────
+    attachOptions('armory', dept.armoryZone, {
+        {
+            distance = 2.0,
+            label    = 'Open Armory',
+            icon     = 'fas fa-shield-alt',
+            groups   = dept.jobName,
+            onSelect = function()
+                if not isOnDuty then
+                    Notify(dept.shortLabel, 'You must be on duty to access the armory.', 'error')
+                    return
+                end
+                OpenArmoryMenu(deptKey, dept)
+            end,
         }
     })
 
-    exports.ox_target:addBoxZone({
-        name     = names.garage,
-        coords   = toVec3(dept.garageZone.coords),
-        size     = toVec3(dept.garageZone.size),
-        rotation = dept.garageZone.rotation or 0,
-        options  = {
-            {
-                distance = 1.5,
-                label    = 'Open Garage',
-                icon     = 'fas fa-car',
-                groups   = dept.jobName,
-                onSelect = function()
-                    if not isOnDuty then
-                        Notify(dept.shortLabel, 'You must be on duty to access the garage.', 'error')
-                        return
-                    end
-                    OpenGarageMenu(deptKey, dept)
-                end,
-            }
+    -- ── Garage ────────────────────────────────────────────────
+    attachOptions('garage', dept.garageZone, {
+        {
+            distance = 2.0,
+            label    = 'Open Garage',
+            icon     = 'fas fa-car',
+            groups   = dept.jobName,
+            onSelect = function()
+                if not isOnDuty then
+                    Notify(dept.shortLabel, 'You must be on duty to access the garage.', 'error')
+                    return
+                end
+                OpenGarageMenu(deptKey, dept)
+            end,
+        },
+        {
+            distance = 2.0,
+            label    = 'Return Vehicle',
+            icon     = 'fas fa-undo',
+            groups   = dept.jobName,
+            canInteract = function()
+                return GetVehiclePedIsIn(PlayerPedId(), false) ~= 0
+            end,
+            onSelect = function()
+                local vehicle = GetVehiclePedIsIn(PlayerPedId(), false)
+                if vehicle == 0 then
+                    Notify(dept.shortLabel, 'You must be in a vehicle to return it.', 'error')
+                    return
+                end
+                local plate = GetVehicleNumberPlateText(vehicle):gsub('%s+', '')
+                TriggerServerEvent('d4rk_emergency:server:returnVehicle', deptKey, plate)
+            end,
         }
     })
 end
 
--- ── RefreshDeptZones (called from admin.lua on configUpdated) ─
+-- ── RefreshDeptZones ──────────────────────────────────────────
 
 function RefreshDeptZones(deptKey, deptData)
     local jobName = GetPlayerJob()
@@ -266,40 +349,119 @@ end
 
 function OpenGarageMenu(deptKey, dept)
     local _, grade = GetPlayerJob()
-    local options  = {}
+
+    -- Fetch live fleet status from server
+    local fleet = lib.callback.await('d4rk_emergency:server:getFleetStatus', false, deptKey) or {}
+
+    local options = {}
     for _, v in ipairs(dept.vehicles) do
         if grade >= v.grade then
+            local status  = fleet[v.model] or { available = 0, maxCount = 0 }
+            local avail   = status.available or 0
+            local maxC    = status.maxCount  or 0
+            local canSpawn = avail > 0
+
             options[#options + 1] = {
                 title    = v.label,
                 icon     = 'fas fa-car',
+                disabled = not canSpawn,
+                metadata = {
+                    { label = 'Available', value = avail .. ' / ' .. maxC },
+                },
                 onSelect = function()
                     TriggerServerEvent('d4rk_emergency:server:spawnVehicle', deptKey, v.model)
                 end,
             }
+
+            -- Order option for eligible grades
+            local orderGrade = v.orderGrade or 6
+            if grade >= orderGrade then
+                options[#options + 1] = {
+                    title    = 'Order: ' .. v.label,
+                    icon     = 'fas fa-plus-circle',
+                    metadata = {
+                        { label = 'Current Fleet', value = maxC },
+                    },
+                    onSelect = function()
+                        TriggerServerEvent('d4rk_emergency:server:orderVehicle', deptKey, v.model)
+                        -- Refresh menu after order
+                        Wait(300)
+                        OpenGarageMenu(deptKey, dept)
+                    end,
+                }
+            end
         end
     end
+
     if #options == 0 then
         Notify(dept.shortLabel, 'No vehicles available for your rank.', 'error')
         return
     end
+
     lib.registerContext({ id = 'd4rk_garage_' .. deptKey, title = dept.shortLabel .. ' — Garage', options = options })
     lib.showContext('d4rk_garage_' .. deptKey)
 end
 
--- ── Vehicle spawn ─────────────────────────────────────────────
+-- ── Vehicle spawn (from server) ───────────────────────────────
 
-RegisterNetEvent('d4rk_emergency:client:spawnVehicle', function(deptKey, model)
+RegisterNetEvent('d4rk_emergency:client:spawnVehicle', function(deptKey, model, plate, vehicleConfig)
     local dept       = Config.Departments[deptKey]
     local spawnPoint = dept.garageZone.spawnPoint
     lib.requestModel(model)
+
     local vehicle = CreateVehicle(
         GetHashKey(model),
         spawnPoint.x, spawnPoint.y, spawnPoint.z, spawnPoint.w,
         true, false
     )
+
+    -- Set plate
+    if plate and plate ~= '' then
+        SetVehicleNumberPlateText(vehicle, plate)
+    end
+
+    -- Apply livery
+    if vehicleConfig and vehicleConfig.livery and vehicleConfig.livery >= 0 then
+        SetVehicleLivery(vehicle, vehicleConfig.livery)
+    end
+
+    -- Apply colors
+    if vehicleConfig then
+        local c1 = vehicleConfig.color1
+        local c2 = vehicleConfig.color2 or c1
+        if c1 then SetVehicleColours(vehicle, c1, c2) end
+    end
+
+    -- Apply extras
+    if vehicleConfig and vehicleConfig.extrasOn then
+        for _, extraId in ipairs(vehicleConfig.extrasOn) do
+            SetVehicleExtra(vehicle, extraId, false)  -- false = ON
+        end
+    end
+    if vehicleConfig and vehicleConfig.extrasOff then
+        for _, extraId in ipairs(vehicleConfig.extrasOff) do
+            SetVehicleExtra(vehicle, extraId, true)   -- true = OFF
+        end
+    end
+
     SetPedIntoVehicle(PlayerPedId(), vehicle, -1)
     SetVehicleEngineOn(vehicle, true, true, false)
-    Notify(dept.shortLabel, ('Vehicle spawned: %s'):format(model), 'success')
+
+    local label = vehicleConfig and vehicleConfig.label or model
+    Notify(dept.shortLabel, ('Vehicle spawned: %s [%s]'):format(label, plate or ''), 'success')
+end)
+
+-- ── Vehicle delete (return confirmed by server) ───────────────
+
+RegisterNetEvent('d4rk_emergency:client:deleteVehicle', function()
+    local vehicle = GetVehiclePedIsIn(PlayerPedId(), false)
+    if vehicle ~= 0 then
+        TaskLeaveVehicle(PlayerPedId(), vehicle, 0)
+        Wait(1500)
+        if DoesEntityExist(vehicle) then
+            DeleteVehicle(vehicle)
+        end
+    end
 end)
 
 -- ── Duty sync ─────────────────────────────────────────────────
@@ -318,7 +480,7 @@ RegisterNetEvent('d4rk_emergency:client:updateDutyCount', function(deptKey, coun
     dutyCounts[deptKey] = count
 end)
 
--- ── Blip init from server (DB data) ──────────────────────────
+-- ── Blip init ─────────────────────────────────────────────────
 
 RegisterNetEvent('d4rk_emergency:client:initBlips', function(blipData)
     for deptKey, data in pairs(blipData) do
@@ -333,7 +495,7 @@ RegisterNetEvent('d4rk_emergency:client:deptDeleted', function(deptKey)
     RemoveDeptZones(deptKey)
 end)
 
--- ── Resource start ────────────────────────────────────────────
+-- ── Resource start / stop ─────────────────────────────────────
 
 AddEventHandler('onClientResourceStart', function(resourceName)
     if resourceName ~= GetCurrentResourceName() then return end
@@ -346,6 +508,17 @@ AddEventHandler('onClientResourceStart', function(resourceName)
     CreateThread(function()
         InitZones()
     end)
+end)
+
+AddEventHandler('onResourceStop', function(resourceName)
+    if resourceName ~= GetCurrentResourceName() then return end
+    local keys = {}
+    for deptKey in pairs(spawnedEntities) do
+        keys[#keys + 1] = deptKey
+    end
+    for _, deptKey in ipairs(keys) do
+        DespawnDeptEntities(deptKey)
+    end
 end)
 
 AddEventHandler('QBCore:Client:OnJobUpdate', function(JobInfo)

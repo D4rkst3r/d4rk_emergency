@@ -3,8 +3,8 @@
 --  Uses d4rk_core for: Notify, Logging, GetPlayerJob, GetIdentifier
 -- ============================================================
 
-ActiveConfig        = {}
-local onDutyPlayers = {}
+ActiveConfig    = {}
+onDutyPlayers   = {}   -- global so garage.lua can access it
 
 -- ── d4rk_core shortcuts ───────────────────────────────────────
 
@@ -19,6 +19,8 @@ end
 local function GetPlayerJob(source)
     return exports['d4rk_core']:GetPlayerJob(source)
 end
+
+-- ── Grade helper ──────────────────────────────────────────────
 
 local function GetGrade(dept, grade)
     return dept.grades[grade] or dept.grades[tostring(grade)] or {}
@@ -42,9 +44,13 @@ CreateThread(function()
             end
         end
 
-        -- Broadcast blips to all already-connected clients.
-        -- Needed when the resource is restarted while players are online,
-        -- because their onClientResourceStart already fired before ActiveConfig was ready.
+        -- Sync fleet for all departments
+        for deptKey, dept in pairs(ActiveConfig) do
+            Garage.SyncFleet(deptKey, dept)
+        end
+        Log('Fleet synced.', 'success')
+
+        -- Broadcast blips to already-connected clients
         local blipData = BuildBlipData()
         if next(blipData) then
             TriggerClientEvent('d4rk_emergency:client:initBlips', -1, blipData)
@@ -77,9 +83,6 @@ function BuildBlipData()
     return blipData
 end
 
--- Client requests blip data on resource start.
--- Uses a thread with retry because ActiveConfig may not be ready yet
--- (e.g. resource restart while players are online).
 RegisterNetEvent('d4rk_emergency:server:requestBlips', function()
     local src = source
     CreateThread(function()
@@ -119,12 +122,11 @@ RegisterNetEvent('d4rk_emergency:server:toggleDuty', function(deptKey)
         Player.Functions.SetJobDuty(false)
         Notify(source, dept.shortLabel, 'You are now OFF DUTY.', 'inform')
         TriggerClientEvent('d4rk_emergency:client:dutyChanged', source, false, deptKey)
-        Log(('%s went OFF DUTY [%s]'):format(
-            exports['d4rk_core']:GetPlayerName(source), dept.shortLabel))
+        Log(('%s went OFF DUTY [%s]'):format(exports['d4rk_core']:GetPlayerName(source), dept.shortLabel))
     else
         onDutyPlayers[source] = { deptKey = deptKey, grade = grade }
         Player.Functions.SetJobDuty(true)
-        local gradeLabel = (dept.grades[grade] or dept.grades[tostring(grade)] or {}).label or 'Unknown'
+        local gradeLabel = GetGrade(dept, grade).label or 'Unknown'
         Notify(source, dept.shortLabel, ('You are now ON DUTY as %s.'):format(gradeLabel), 'success')
         TriggerClientEvent('d4rk_emergency:client:dutyChanged', source, true, deptKey)
         Log(('%s went ON DUTY [%s] as %s'):format(
@@ -145,14 +147,14 @@ local function PaySalary()
         local dept = ActiveConfig[data.deptKey]
         if dept then
             local gradeData = GetGrade(dept, data.grade)
-                if gradeData and gradeData.label then
+            if gradeData and gradeData.salary then
                 local amount = gradeData.salary
                 exports['Renewed-Banking']:addAccountMoney(
                     'bank', src, amount,
                     ('Salary - %s'):format(dept.shortLabel)
                 )
                 Notify(src, 'Payroll',
-                    ('Salary received: %s (%s)'):format(DC.FormatMoney(amount), gradeData.label),
+                    ('Salary received: %s (%s)'):format(DC.FormatMoney(amount), gradeData.label or ''),
                     'success')
             end
         end
@@ -194,35 +196,6 @@ RegisterNetEvent('d4rk_emergency:server:giveWeapon', function(deptKey, itemName)
 
     exports.ox_inventory:AddItem(source, itemName, 1)
     Notify(source, 'Armory', ('Issued: %s'):format(itemName), 'success')
-end)
-
--- ── Garage ────────────────────────────────────────────────────
-
-RegisterNetEvent('d4rk_emergency:server:spawnVehicle', function(deptKey, model)
-    local source = source
-    if not IsValidDeptJob(source, deptKey) then return end
-    if not onDutyPlayers[source] then
-        Notify(source, 'Garage', 'You must be on duty to access the garage.', 'error')
-        return
-    end
-
-    local dept     = ActiveConfig[deptKey]
-    local _, grade = GetPlayerJob(source)
-    local allowed  = false
-
-    for _, v in ipairs(dept.vehicles) do
-        if v.model == model and grade >= v.grade then
-            allowed = true
-            break
-        end
-    end
-
-    if not allowed then
-        Notify(source, 'Garage', 'Your rank does not permit this vehicle.', 'error')
-        return
-    end
-
-    TriggerClientEvent('d4rk_emergency:client:spawnVehicle', source, deptKey, model)
 end)
 
 -- ── Config sync ───────────────────────────────────────────────
