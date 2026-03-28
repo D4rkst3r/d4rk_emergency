@@ -63,8 +63,6 @@ function RefreshDeptBlips(deptKey, deptData)
 end
 
 -- ── Zone management ───────────────────────────────────────────
--- registeredZones[deptKey] = { duty, cloakroom, armory, garage }
--- Names are used to remove zones before re-registering.
 
 local registeredZones = {}
 
@@ -77,10 +75,19 @@ local function RemoveDeptZones(deptKey)
     registeredZones[deptKey] = nil
 end
 
+-- ── Utility ───────────────────────────────────────────────────
+
+local function GetCurrentDept()
+    local jobName = GetPlayerJob()
+    if not jobName then return nil, nil end
+    return Config.GetDeptByJob(jobName)
+end
+
+-- ── RegisterDeptZones ─────────────────────────────────────────
+
 local function RegisterDeptZones(deptKey, dept)
     RemoveDeptZones(deptKey)
 
-    -- Unique zone name prefix so multiple depts don't conflict
     local p     = 'd4rk_' .. deptKey .. '_'
     local names = {
         duty      = p .. 'duty',
@@ -93,12 +100,14 @@ local function RegisterDeptZones(deptKey, dept)
     exports.ox_target:addBoxZone({
         name     = names.duty,
         coords   = toVec3(dept.dutyZone.coords),
-        size     = toVec3(dept.dutyZone.size),
+        size     = vec3(3.0, 3.0, 2.0),
         rotation = dept.dutyZone.rotation or 0,
+        debug    = true,
         options  = {
             {
+                name     = 'd4rk_' .. deptKey .. '_duty_toggle',  -- ← das fehlt
                 label    = isOnDuty and ('Go Off Duty [%s]'):format(dept.shortLabel)
-                                     or ('Go On Duty [%s]'):format(dept.shortLabel),
+                                    or ('Go On Duty [%s]'):format(dept.shortLabel),
                 icon     = isOnDuty and 'fas fa-sign-out-alt' or 'fas fa-sign-in-alt',
                 onSelect = function()
                     TriggerServerEvent('d4rk_emergency:server:toggleDuty', deptKey)
@@ -114,6 +123,7 @@ local function RegisterDeptZones(deptKey, dept)
         rotation = dept.cloakroomZone.rotation or 0,
         options  = {
             {
+                name = 'd4rk_' .. deptKey .. '_uniform_change',
                 label    = 'Change Uniform',
                 icon     = 'fas fa-tshirt',
                 onSelect = function()
@@ -125,6 +135,7 @@ local function RegisterDeptZones(deptKey, dept)
                 end,
             },
             {
+                name = 'd4rk_' .. deptKey .. '_uniform_remove',
                 label    = 'Remove Uniform',
                 icon     = 'fas fa-undo',
                 onSelect = function()
@@ -142,6 +153,7 @@ local function RegisterDeptZones(deptKey, dept)
         rotation = dept.armoryZone.rotation or 0,
         options  = {
             {
+                name = 'd4rk_' .. deptKey .. '_armory_open',
                 label    = 'Open Armory',
                 icon     = 'fas fa-shield-alt',
                 onSelect = function()
@@ -162,6 +174,7 @@ local function RegisterDeptZones(deptKey, dept)
         rotation = dept.garageZone.rotation or 0,
         options  = {
             {
+                name = 'd4rk_' .. deptKey .. '_garage_open',
                 label    = 'Open Garage',
                 icon     = 'fas fa-car',
                 onSelect = function()
@@ -176,34 +189,30 @@ local function RegisterDeptZones(deptKey, dept)
     })
 end
 
--- Called by client/admin.lua when configUpdated fires for the player's own dept
+-- ── RefreshDeptZones (called from admin.lua on configUpdated) ─
+
 function RefreshDeptZones(deptKey, deptData)
     local jobName = GetPlayerJob()
     if not jobName then return end
-    -- Only refresh zones that belong to this player
     local myDeptKey = Config.GetDeptByJob(jobName)
     if myDeptKey ~= deptKey then return end
     RegisterDeptZones(deptKey, deptData)
 end
 
--- ── Utility ───────────────────────────────────────────────────
+-- ── InitZones ─────────────────────────────────────────────────
 
-local function GetCurrentDept()
-    local jobName = GetPlayerJob()
-    if not jobName then return nil, nil end
-    return Config.GetDeptByJob(jobName)
-end
-
--- ── Initial zone registration ─────────────────────────────────
-
-CreateThread(function()
+local function InitZones()
     while not exports.qbx_core:GetPlayerData() do Wait(500) end
 
     local deptKey, dept = GetCurrentDept()
-    if not deptKey then return end
+    if not deptKey then
+        print('[d4rk_emergency] InitZones: no matching dept for job ' .. tostring(GetPlayerJob()))
+        return
+    end
 
+    print('[d4rk_emergency] InitZones: registering zones for ' .. deptKey)
     RegisterDeptZones(deptKey, dept)
-end)
+end
 
 -- ── Cloakroom ─────────────────────────────────────────────────
 
@@ -294,7 +303,6 @@ RegisterNetEvent('d4rk_emergency:client:dutyChanged', function(onDuty, deptKey)
     isOnDuty    = onDuty
     currentDept = onDuty and deptKey or nil
 
-    -- Zone neu registrieren damit der Button-Text stimmt
     local dept = Config.Departments[deptKey]
     if dept then
         RegisterDeptZones(deptKey, dept)
@@ -324,12 +332,17 @@ end)
 
 AddEventHandler('onClientResourceStart', function(resourceName)
     if resourceName ~= GetCurrentResourceName() then return end
+
     for deptKey in pairs(Config.Departments) do
         TriggerServerEvent('d4rk_emergency:server:getDutyCount', deptKey)
     end
     TriggerServerEvent('d4rk_emergency:server:requestBlips')
+
+    CreateThread(function()
+        InitZones()
+    end)
 end)
 
 AddEventHandler('QBCore:Client:OnJobUpdate', function(JobInfo)
-    -- Zone re-registration handled on resource restart
+    -- Zone re-registration handled via onClientResourceStart / dutyChanged
 end)
