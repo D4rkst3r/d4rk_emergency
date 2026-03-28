@@ -29,12 +29,13 @@ local function CreateDeptBlips(deptKey, deptData)
     for _, b in ipairs(blips) do
         if b.coords then
             local blip = AddBlipForCoord(b.coords.x, b.coords.y, b.coords.z)
+            SetBlipDisplay(blip, 2)
             SetBlipSprite(blip, b.sprite or 1)
             SetBlipColour(blip, b.color or 0)
-            SetBlipScale(blip, b.scale or 1.0)
-            SetBlipAsShortRange(blip, b.shortRange or false)
-            BeginTextCommandSetBlipName('STRING')
-            AddTextComponentSubstringPlayerName(b.label ~= '' and b.label or (deptData.shortLabel or deptKey))
+            SetBlipScale(blip, b.scale or 0.85)
+            SetBlipAsShortRange(blip, b.shortRange ~= false)  -- Default true, wie bei dir
+            BeginTextCommandSetBlipName("STRING")
+            AddTextComponentString(b.label ~= '' and b.label or (deptData.shortLabel or deptKey))
             EndTextCommandSetBlipName(blip)
             activeBlips[deptKey][#activeBlips[deptKey] + 1] = blip
         end

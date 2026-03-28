@@ -22,6 +22,14 @@ CreateThread(function()
                 ActiveConfig[deptKey] = dept
             end
         end
+
+        -- Broadcast blips to all already-connected clients.
+        -- Needed when the resource is restarted while players are online,
+        -- because their onClientResourceStart already fired before ActiveConfig was ready.
+        local blipData = BuildBlipData()
+        if next(blipData) then
+            TriggerClientEvent('d4rk_emergency:client:initBlips', -1, blipData)
+        end
     end)
 end)
 
@@ -57,11 +65,8 @@ local function Notify(source, title, msg, ntype)
 end
 
 -- ── Blips ─────────────────────────────────────────────────────
--- Clients request all dept blips on resource start so they get
--- the DB version rather than the static shared.lua fallback.
 
-RegisterNetEvent('d4rk_emergency:server:requestBlips', function()
-    local source = source
+function BuildBlipData()
     local blipData = {}
     for deptKey, dept in pairs(ActiveConfig) do
         if dept.blips and #dept.blips > 0 then
@@ -72,7 +77,22 @@ RegisterNetEvent('d4rk_emergency:server:requestBlips', function()
             }
         end
     end
-    TriggerClientEvent('d4rk_emergency:client:initBlips', source, blipData)
+    return blipData
+end
+
+-- Client requests blip data on resource start.
+-- Uses a thread with retry because ActiveConfig may not be ready yet
+-- (e.g. resource restart while players are online).
+RegisterNetEvent('d4rk_emergency:server:requestBlips', function()
+    local src = source
+    CreateThread(function()
+        local attempts = 0
+        while not next(ActiveConfig) and attempts < 20 do
+            Wait(500)
+            attempts = attempts + 1
+        end
+        TriggerClientEvent('d4rk_emergency:client:initBlips', src, BuildBlipData())
+    end)
 end)
 
 -- ── Duty ──────────────────────────────────────────────────────
