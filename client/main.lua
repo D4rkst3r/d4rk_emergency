@@ -1,6 +1,5 @@
 -- ============================================================
 --  d4rk_emergency — Client Main
---  Uses d4rk_core for: Notify, GetPlayerJob, CreateBlip
 -- ============================================================
 
 local isOnDuty    = false
@@ -17,9 +16,15 @@ local function GetPlayerJob()
     return exports['d4rk_core']:GetPlayerJob()
 end
 
+-- ── Vec helper (deptData from configUpdated has plain tables, not vec3) ──
+
+local function toVec3(v)
+    if not v then return vec3(0, 0, 0) end
+    if type(v) == 'userdata' then return v end
+    return vec3(tonumber(v.x) or 0, tonumber(v.y) or 0, tonumber(v.z) or 0)
+end
+
 -- ── Blip management ───────────────────────────────────────────
--- Blips are visible to ALL players (public map markers)
--- activeBlips[deptKey] = { blipHandle, blipHandle, ... }
 
 local activeBlips = {}
 
@@ -53,31 +58,43 @@ local function CreateDeptBlips(deptKey, deptData)
     end
 end
 
--- Called by client/admin.lua when configUpdated fires
 function RefreshDeptBlips(deptKey, deptData)
     CreateDeptBlips(deptKey, deptData)
 end
 
--- ── Utility ───────────────────────────────────────────────────
+-- ── Zone management ───────────────────────────────────────────
+-- registeredZones[deptKey] = { duty, cloakroom, armory, garage }
+-- Names are used to remove zones before re-registering.
 
-local function GetCurrentDept()
-    local jobName = GetPlayerJob()
-    if not jobName then return nil, nil end
-    return Config.GetDeptByJob(jobName)
+local registeredZones = {}
+
+local function RemoveDeptZones(deptKey)
+    local names = registeredZones[deptKey]
+    if not names then return end
+    for _, name in pairs(names) do
+        exports.ox_target:removeZone(name)
+    end
+    registeredZones[deptKey] = nil
 end
 
--- ── Zone registration ─────────────────────────────────────────
+local function RegisterDeptZones(deptKey, dept)
+    RemoveDeptZones(deptKey)
 
-CreateThread(function()
-    while not exports.qbx_core:GetPlayerData() do Wait(500) end
-
-    local deptKey, dept = GetCurrentDept()
-    if not deptKey then return end
+    -- Unique zone name prefix so multiple depts don't conflict
+    local p     = 'd4rk_' .. deptKey .. '_'
+    local names = {
+        duty      = p .. 'duty',
+        cloakroom = p .. 'cloakroom',
+        armory    = p .. 'armory',
+        garage    = p .. 'garage',
+    }
+    registeredZones[deptKey] = names
 
     exports.ox_target:addBoxZone({
-        coords   = dept.dutyZone.coords,
-        size     = dept.dutyZone.size,
-        rotation = dept.dutyZone.rotation,
+        name     = names.duty,
+        coords   = toVec3(dept.dutyZone.coords),
+        size     = toVec3(dept.dutyZone.size),
+        rotation = dept.dutyZone.rotation or 0,
         options  = {
             {
                 label    = isOnDuty and ('Go Off Duty [%s]'):format(dept.shortLabel)
@@ -91,9 +108,10 @@ CreateThread(function()
     })
 
     exports.ox_target:addBoxZone({
-        coords   = dept.cloakroomZone.coords,
-        size     = dept.cloakroomZone.size,
-        rotation = dept.cloakroomZone.rotation,
+        name     = names.cloakroom,
+        coords   = toVec3(dept.cloakroomZone.coords),
+        size     = toVec3(dept.cloakroomZone.size),
+        rotation = dept.cloakroomZone.rotation or 0,
         options  = {
             {
                 label    = 'Change Uniform',
@@ -118,9 +136,10 @@ CreateThread(function()
     })
 
     exports.ox_target:addBoxZone({
-        coords   = dept.armoryZone.coords,
-        size     = dept.armoryZone.size,
-        rotation = dept.armoryZone.rotation,
+        name     = names.armory,
+        coords   = toVec3(dept.armoryZone.coords),
+        size     = toVec3(dept.armoryZone.size),
+        rotation = dept.armoryZone.rotation or 0,
         options  = {
             {
                 label    = 'Open Armory',
@@ -137,9 +156,10 @@ CreateThread(function()
     })
 
     exports.ox_target:addBoxZone({
-        coords   = dept.garageZone.coords,
-        size     = dept.garageZone.size,
-        rotation = dept.garageZone.rotation,
+        name     = names.garage,
+        coords   = toVec3(dept.garageZone.coords),
+        size     = toVec3(dept.garageZone.size),
+        rotation = dept.garageZone.rotation or 0,
         options  = {
             {
                 label    = 'Open Garage',
@@ -154,6 +174,35 @@ CreateThread(function()
             }
         }
     })
+end
+
+-- Called by client/admin.lua when configUpdated fires for the player's own dept
+function RefreshDeptZones(deptKey, deptData)
+    local jobName = GetPlayerJob()
+    if not jobName then return end
+    -- Only refresh zones that belong to this player
+    local myDeptKey = Config.GetDeptByJob(jobName)
+    if myDeptKey ~= deptKey then return end
+    RegisterDeptZones(deptKey, deptData)
+end
+
+-- ── Utility ───────────────────────────────────────────────────
+
+local function GetCurrentDept()
+    local jobName = GetPlayerJob()
+    if not jobName then return nil, nil end
+    return Config.GetDeptByJob(jobName)
+end
+
+-- ── Initial zone registration ─────────────────────────────────
+
+CreateThread(function()
+    while not exports.qbx_core:GetPlayerData() do Wait(500) end
+
+    local deptKey, dept = GetCurrentDept()
+    if not deptKey then return end
+
+    RegisterDeptZones(deptKey, dept)
 end)
 
 -- ── Cloakroom ─────────────────────────────────────────────────
@@ -244,6 +293,12 @@ end)
 RegisterNetEvent('d4rk_emergency:client:dutyChanged', function(onDuty, deptKey)
     isOnDuty    = onDuty
     currentDept = onDuty and deptKey or nil
+
+    -- Zone neu registrieren damit der Button-Text stimmt
+    local dept = Config.Departments[deptKey]
+    if dept then
+        RegisterDeptZones(deptKey, dept)
+    end
 end)
 
 RegisterNetEvent('d4rk_emergency:client:updateDutyCount', function(deptKey, count)
@@ -262,6 +317,7 @@ end)
 
 RegisterNetEvent('d4rk_emergency:client:deptDeleted', function(deptKey)
     RemoveDeptBlips(deptKey)
+    RemoveDeptZones(deptKey)
 end)
 
 -- ── Resource start ────────────────────────────────────────────

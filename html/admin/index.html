@@ -532,7 +532,6 @@ let pollTimer      = null;
 
 const COLORS = ['#5b8def','#7b5cf6','#2dd4a0','#f0545a','#f5a623','#e879f9','#38bdf8','#fb923c'];
 
-// ── Blip reference data (from ec-blips) ───────────────────────
 const BLIP_COLORS = [
   {id:0,  name:'White',       hex:'#e8e8e8'},
   {id:1,  name:'Red',         hex:'#e84848'},
@@ -716,7 +715,6 @@ async function poll() {
   (status.versions || []).forEach(v => {
     const prev = serverVersions[v.key];
     if (prev && v.updatedAt > prev) {
-      // Known dept was updated by someone else
       serverVersions[v.key] = v.updatedAt;
       if (v.key === activeDeptKey) {
         document.getElementById('conflict-banner').classList.add('show');
@@ -725,7 +723,6 @@ async function poll() {
         reloadDeptSilent(v.key);
       }
     } else if (!prev && v.updatedAt) {
-      // Brand new dept we don't have yet
       serverVersions[v.key] = v.updatedAt;
       if (!departments.find(d => d.key === v.key)) {
         toast(`New department "${v.key}" created by ${v.updatedBy || 'another admin'}`, 'info');
@@ -884,11 +881,16 @@ function tabZones() {
         <div class="f grow"><label>Label</label><input value="${esc(z.label||'')}" oninput="sz('${key}','label',this.value)" /></div>
         <div class="f" style="width:75px"><label>Rotation</label><input type="number" value="${z.rotation||0}" oninput="sz('${key}','rotation',+this.value)" /></div>
       </div>
-      <div class="slabel" style="margin-top:10px;margin-bottom:6px">Coords</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;margin-bottom:6px">
+        <div class="slabel" style="margin:0">Coords</div>
+        ${IS_NUI
+          ? `<button class="btn-del" title="Use my position" onclick="fillZoneFromPos('${key}')" style="font-size:13px;padding:2px 6px">📍 My Position</button>`
+          : `<button class="btn-del" style="font-size:11px;opacity:.3;cursor:not-allowed;padding:2px 6px" disabled>📍 In-game only</button>`}
+      </div>
       <div class="vrow">
-        <div class="f"><label>X</label><input type="number" step="0.01" value="${c.x||0}" oninput="sv('${key}','coords','x',+this.value)" /></div>
-        <div class="f"><label>Y</label><input type="number" step="0.01" value="${c.y||0}" oninput="sv('${key}','coords','y',+this.value)" /></div>
-        <div class="f"><label>Z</label><input type="number" step="0.01" value="${c.z||0}" oninput="sv('${key}','coords','z',+this.value)" /></div>
+        <div class="f"><label>X</label><input id="zx_${key}" type="number" step="0.01" value="${c.x||0}" oninput="sv('${key}','coords','x',+this.value)" /></div>
+        <div class="f"><label>Y</label><input id="zy_${key}" type="number" step="0.01" value="${c.y||0}" oninput="sv('${key}','coords','y',+this.value)" /></div>
+        <div class="f"><label>Z</label><input id="zz_${key}" type="number" step="0.01" value="${c.z||0}" oninput="sv('${key}','coords','z',+this.value)" /></div>
       </div>
       <div class="slabel" style="margin-top:10px;margin-bottom:6px">Size</div>
       <div class="vrow">
@@ -903,7 +905,7 @@ function tabZones() {
         <div class="f"><label>Z</label><input type="number" step="0.01" value="${p.z||0}" oninput="sv('${key}','spawnPoint','z',+this.value)" /></div>
         <div class="f"><label>Heading</label><input type="number" step="1" value="${p.w||0}" oninput="sv('${key}','spawnPoint','w',+this.value)" /></div>
       </div>` : ''}
-      <div class="zone-warn">⚠ Zone changes require a resource restart to take effect.</div>
+      <div class="zone-warn">✅ Zone changes (coords, size, rotation) apply live. No restart needed.</div>
     </div>`;
   };
   return `<div class="zone-grid">
@@ -979,9 +981,9 @@ function tabBlips() {
 
   const posBtn = (i) => IS_NUI
     ? `<button class="btn-del" title="Use my position" onclick="fillRowFromPos(${i})" style="font-size:13px">📍</button>`
-    : `<button class="btn-del" title="Only available in-game" style="opacity:.3;cursor:not-allowed;font-size:13px">📍</button>`;
+    : `<button class="btn-del" title="Only available in-game" style="opacity:.3;cursor:not-allowed;font-size:13px" disabled>📍</button>`;
 
-  const sel = 'background:var(--input);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:4px 6px;font-size:11px;outline:none;width:100%';
+  const sel = 'background:var(--s2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:4px 6px;font-size:11px;outline:none;width:100%';
 
   const rows = (d.blips || []).map((b, i) => `<tr>
     <td style="min-width:110px"><input value="${esc(b.label||'')}" oninput="draftDept.blips[${i}].label=this.value" placeholder="SAPD HQ" /></td>
@@ -1015,7 +1017,7 @@ function tabBlips() {
     <div class="slabel">Map Blips</div>
     <div style="background:var(--s2);border:1px solid var(--border);border-radius:var(--r2);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--sub);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <span>From zone:</span>
-      <select id="zone-copy-sel" style="background:var(--input);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:4px 8px;font-size:11px;outline:none">
+      <select id="zone-copy-sel" style="background:var(--s2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:4px 8px;font-size:11px;outline:none">
         <option value="">— select —</option>${zoneOpts}
       </select>
       <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="copyZoneToBlip()">Add as Blip</button>
@@ -1075,6 +1077,26 @@ function copyZoneToBlip() {
   switchTab('blips');
 }
 
+// ── Zone coords from player position ─────────────────────────
+async function fillZoneFromPos(zoneKey) {
+  const coords = await nuiCall('admin_getPlayerCoords');
+  if (!coords) { toast('Could not get player position', 'error'); return; }
+
+  if (!draftDept[zoneKey]) draftDept[zoneKey] = {};
+  if (!draftDept[zoneKey].coords) draftDept[zoneKey].coords = {x:0,y:0,z:0};
+  draftDept[zoneKey].coords = { x: coords.x, y: coords.y, z: coords.z };
+
+  const xEl = document.getElementById('zx_' + zoneKey);
+  const yEl = document.getElementById('zy_' + zoneKey);
+  const zEl = document.getElementById('zz_' + zoneKey);
+  if (xEl) xEl.value = coords.x;
+  if (yEl) yEl.value = coords.y;
+  if (zEl) zEl.value = coords.z;
+
+  toast(`${zoneKey} → ${coords.x}, ${coords.y}, ${coords.z}`, 'success');
+}
+
+// ── Blip coords from player position ─────────────────────────
 async function fillRowFromPos(i) {
   const coords = await nuiCall('admin_getPlayerCoords');
   if (!coords) return;
@@ -1093,7 +1115,6 @@ async function addBlipAtPos() {
   const coords = await nuiCall('admin_getPlayerCoords');
   if (!coords) { toast('Could not get player position', 'error'); return; }
   addNewBlip({ x: coords.x, y: coords.y, z: coords.z });
-  // Set label to dept short name on the newly added entry
   draftDept.blips[draftDept.blips.length - 1].label = draftDept.shortLabel || '';
   switchTab('blips');
   toast(`Blip added at ${coords.x}, ${coords.y}, ${coords.z}`, 'success');
