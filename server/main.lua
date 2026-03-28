@@ -20,6 +20,10 @@ local function GetPlayerJob(source)
     return exports['d4rk_core']:GetPlayerJob(source)
 end
 
+local function GetGrade(dept, grade)
+    return dept.grades[grade] or dept.grades[tostring(grade)] or {}
+end
+
 -- ── Startup ───────────────────────────────────────────────────
 
 CreateThread(function()
@@ -107,18 +111,20 @@ RegisterNetEvent('d4rk_emergency:server:toggleDuty', function(deptKey)
 
     local jobName, grade = GetPlayerJob(source)
     local dept           = ActiveConfig[deptKey]
+    local Player         = exports.qbx_core:GetPlayer(source)
+    if not Player then return end
 
     if onDutyPlayers[source] then
         onDutyPlayers[source] = nil
-        exports.qbx_core:SetPlayerJobDuty(source, false)
+        Player.Functions.SetJobDuty(false)
         Notify(source, dept.shortLabel, 'You are now OFF DUTY.', 'inform')
         TriggerClientEvent('d4rk_emergency:client:dutyChanged', source, false, deptKey)
         Log(('%s went OFF DUTY [%s]'):format(
             exports['d4rk_core']:GetPlayerName(source), dept.shortLabel))
     else
         onDutyPlayers[source] = { deptKey = deptKey, grade = grade }
-        exports.qbx_core:SetPlayerJobDuty(source, true)
-        local gradeLabel = dept.grades[grade] and dept.grades[grade].label or 'Unknown'
+        Player.Functions.SetJobDuty(true)
+        local gradeLabel = (dept.grades[grade] or dept.grades[tostring(grade)] or {}).label or 'Unknown'
         Notify(source, dept.shortLabel, ('You are now ON DUTY as %s.'):format(gradeLabel), 'success')
         TriggerClientEvent('d4rk_emergency:client:dutyChanged', source, true, deptKey)
         Log(('%s went ON DUTY [%s] as %s'):format(
@@ -138,8 +144,8 @@ local function PaySalary()
     for src, data in pairs(onDutyPlayers) do
         local dept = ActiveConfig[data.deptKey]
         if dept then
-            local gradeData = dept.grades[data.grade]
-            if gradeData then
+            local gradeData = GetGrade(dept, data.grade)
+                if gradeData and gradeData.label then
                 local amount = gradeData.salary
                 exports['Renewed-Banking']:addAccountMoney(
                     'bank', src, amount,

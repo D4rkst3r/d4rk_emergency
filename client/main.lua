@@ -100,15 +100,16 @@ local function RegisterDeptZones(deptKey, dept)
     exports.ox_target:addBoxZone({
         name     = names.duty,
         coords   = toVec3(dept.dutyZone.coords),
-        size     = vec3(3.0, 3.0, 2.0),
+        size     = vec3(3.0, 3.0, 3.0),
         rotation = dept.dutyZone.rotation or 0,
         debug    = true,
         options  = {
             {
-                name     = 'd4rk_' .. deptKey .. '_duty_toggle',  -- ← das fehlt
+                distance = 1.5,
                 label    = isOnDuty and ('Go Off Duty [%s]'):format(dept.shortLabel)
-                                    or ('Go On Duty [%s]'):format(dept.shortLabel),
+                                     or ('Go On Duty [%s]'):format(dept.shortLabel),
                 icon     = isOnDuty and 'fas fa-sign-out-alt' or 'fas fa-sign-in-alt',
+                groups   = dept.jobName,
                 onSelect = function()
                     TriggerServerEvent('d4rk_emergency:server:toggleDuty', deptKey)
                 end,
@@ -123,9 +124,10 @@ local function RegisterDeptZones(deptKey, dept)
         rotation = dept.cloakroomZone.rotation or 0,
         options  = {
             {
-                name = 'd4rk_' .. deptKey .. '_uniform_change',
+                distance = 1.5,
                 label    = 'Change Uniform',
                 icon     = 'fas fa-tshirt',
+                groups   = dept.jobName,
                 onSelect = function()
                     if not isOnDuty then
                         Notify(dept.shortLabel, 'You must be on duty to change uniform.', 'error')
@@ -135,9 +137,10 @@ local function RegisterDeptZones(deptKey, dept)
                 end,
             },
             {
-                name = 'd4rk_' .. deptKey .. '_uniform_remove',
+                distance = 1.5,
                 label    = 'Remove Uniform',
                 icon     = 'fas fa-undo',
+                groups   = dept.jobName,
                 onSelect = function()
                     exports['illenium-appearance']:restoreSavedOutfit()
                     Notify(dept.shortLabel, 'Uniform removed.', 'inform')
@@ -153,9 +156,10 @@ local function RegisterDeptZones(deptKey, dept)
         rotation = dept.armoryZone.rotation or 0,
         options  = {
             {
-                name = 'd4rk_' .. deptKey .. '_armory_open',
+                distance = 1.5,
                 label    = 'Open Armory',
                 icon     = 'fas fa-shield-alt',
+                groups   = dept.jobName,
                 onSelect = function()
                     if not isOnDuty then
                         Notify(dept.shortLabel, 'You must be on duty to access the armory.', 'error')
@@ -174,9 +178,10 @@ local function RegisterDeptZones(deptKey, dept)
         rotation = dept.garageZone.rotation or 0,
         options  = {
             {
-                name = 'd4rk_' .. deptKey .. '_garage_open',
+                distance = 1.5,
                 label    = 'Open Garage',
                 icon     = 'fas fa-car',
+                groups   = dept.jobName,
                 onSelect = function()
                     if not isOnDuty then
                         Notify(dept.shortLabel, 'You must be on duty to access the garage.', 'error')
