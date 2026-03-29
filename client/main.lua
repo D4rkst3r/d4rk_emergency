@@ -136,7 +136,9 @@ local function RemoveDeptZones(deptKey)
     local names = registeredZones[deptKey]
     if names then
         for _, name in pairs(names) do
-            exports.ox_target:removeZone(name)
+            pcall(function()
+                exports.ox_target:removeZone(name)
+            end)
         end
         registeredZones[deptKey] = nil
     end
@@ -241,7 +243,7 @@ local function RegisterDeptZones(deptKey, dept)
         }
     })
 
-    -- ── Garage ────────────────────────────────────────────────
+    -- ── Garage (via d4rk_garage) ──────────────────────────────
     attachOptions('garage', dept.garageZone, {
         {
             distance = 2.0,
@@ -253,14 +255,19 @@ local function RegisterDeptZones(deptKey, dept)
                     Notify(dept.shortLabel, 'You must be on duty to access the garage.', 'error')
                     return
                 end
-                OpenGarageMenu(deptKey, dept)
+                local ok = pcall(function()
+                    exports['d4rk_garage']:OpenGarageMenu(deptKey)
+                end)
+                if not ok then
+                    Notify(dept.shortLabel, 'Garage system not available.', 'error')
+                end
             end,
         },
         {
-            distance = 2.0,
-            label    = 'Return Vehicle',
-            icon     = 'fas fa-undo',
-            groups   = dept.jobName,
+            distance    = 2.0,
+            label       = 'Return Vehicle',
+            icon        = 'fas fa-undo',
+            groups      = dept.jobName,
             canInteract = function()
                 return GetVehiclePedIsIn(PlayerPedId(), false) ~= 0
             end,
@@ -271,7 +278,12 @@ local function RegisterDeptZones(deptKey, dept)
                     return
                 end
                 local plate = GetVehicleNumberPlateText(vehicle):gsub('%s+', '')
-                TriggerServerEvent('d4rk_emergency:server:returnVehicle', deptKey, plate)
+                local ok = pcall(function()
+                    exports['d4rk_garage']:ReturnVehicle(deptKey, plate)
+                end)
+                if not ok then
+                    Notify(dept.shortLabel, 'Garage system not available.', 'error')
+                end
             end,
         }
     })
@@ -291,6 +303,12 @@ end
 
 local function InitZones()
     while not exports.qbx_core:GetPlayerData() do Wait(500) end
+
+    local attempts = 0
+    while (type(ActiveConfig) ~= 'table' or not next(ActiveConfig)) and attempts < 20 do
+        Wait(500)
+        attempts = attempts + 1
+    end
 
     local deptKey, dept = GetCurrentDept()
     if not deptKey then
@@ -345,124 +363,9 @@ function OpenArmoryMenu(deptKey, dept)
     lib.showContext('d4rk_armory_' .. deptKey)
 end
 
--- ── Garage menu ───────────────────────────────────────────────
+-- ── Garage menu → handled by d4rk_garage ───────────────────
 
-function OpenGarageMenu(deptKey, dept)
-    local _, grade = GetPlayerJob()
-
-    -- Fetch live fleet status from server
-    local fleet = lib.callback.await('d4rk_emergency:server:getFleetStatus', false, deptKey) or {}
-
-    local options = {}
-    for _, v in ipairs(dept.vehicles) do
-        if grade >= v.grade then
-            local status  = fleet[v.model] or { available = 0, maxCount = 0 }
-            local avail   = status.available or 0
-            local maxC    = status.maxCount  or 0
-            local canSpawn = avail > 0
-
-            options[#options + 1] = {
-                title    = v.label,
-                icon     = 'fas fa-car',
-                disabled = not canSpawn,
-                metadata = {
-                    { label = 'Available', value = avail .. ' / ' .. maxC },
-                },
-                onSelect = function()
-                    TriggerServerEvent('d4rk_emergency:server:spawnVehicle', deptKey, v.model)
-                end,
-            }
-
-            -- Order option for eligible grades
-            local orderGrade = v.orderGrade or 6
-            if grade >= orderGrade then
-                options[#options + 1] = {
-                    title    = 'Order: ' .. v.label,
-                    icon     = 'fas fa-plus-circle',
-                    metadata = {
-                        { label = 'Current Fleet', value = maxC },
-                    },
-                    onSelect = function()
-                        TriggerServerEvent('d4rk_emergency:server:orderVehicle', deptKey, v.model)
-                        -- Refresh menu after order
-                        Wait(300)
-                        OpenGarageMenu(deptKey, dept)
-                    end,
-                }
-            end
-        end
-    end
-
-    if #options == 0 then
-        Notify(dept.shortLabel, 'No vehicles available for your rank.', 'error')
-        return
-    end
-
-    lib.registerContext({ id = 'd4rk_garage_' .. deptKey, title = dept.shortLabel .. ' — Garage', options = options })
-    lib.showContext('d4rk_garage_' .. deptKey)
-end
-
--- ── Vehicle spawn (from server) ───────────────────────────────
-
-RegisterNetEvent('d4rk_emergency:client:spawnVehicle', function(deptKey, model, plate, vehicleConfig)
-    local dept       = Config.Departments[deptKey]
-    local spawnPoint = dept.garageZone.spawnPoint
-    lib.requestModel(model)
-
-    local vehicle = CreateVehicle(
-        GetHashKey(model),
-        spawnPoint.x, spawnPoint.y, spawnPoint.z, spawnPoint.w,
-        true, false
-    )
-
-    -- Set plate
-    if plate and plate ~= '' then
-        SetVehicleNumberPlateText(vehicle, plate)
-    end
-
-    -- Apply livery
-    if vehicleConfig and vehicleConfig.livery and vehicleConfig.livery >= 0 then
-        SetVehicleLivery(vehicle, vehicleConfig.livery)
-    end
-
-    -- Apply colors
-    if vehicleConfig then
-        local c1 = vehicleConfig.color1
-        local c2 = vehicleConfig.color2 or c1
-        if c1 then SetVehicleColours(vehicle, c1, c2) end
-    end
-
-    -- Apply extras
-    if vehicleConfig and vehicleConfig.extrasOn then
-        for _, extraId in ipairs(vehicleConfig.extrasOn) do
-            SetVehicleExtra(vehicle, extraId, false)  -- false = ON
-        end
-    end
-    if vehicleConfig and vehicleConfig.extrasOff then
-        for _, extraId in ipairs(vehicleConfig.extrasOff) do
-            SetVehicleExtra(vehicle, extraId, true)   -- true = OFF
-        end
-    end
-
-    SetPedIntoVehicle(PlayerPedId(), vehicle, -1)
-    SetVehicleEngineOn(vehicle, true, true, false)
-
-    local label = vehicleConfig and vehicleConfig.label or model
-    Notify(dept.shortLabel, ('Vehicle spawned: %s [%s]'):format(label, plate or ''), 'success')
-end)
-
--- ── Vehicle delete (return confirmed by server) ───────────────
-
-RegisterNetEvent('d4rk_emergency:client:deleteVehicle', function()
-    local vehicle = GetVehiclePedIsIn(PlayerPedId(), false)
-    if vehicle ~= 0 then
-        TaskLeaveVehicle(PlayerPedId(), vehicle, 0)
-        Wait(1500)
-        if DoesEntityExist(vehicle) then
-            DeleteVehicle(vehicle)
-        end
-    end
-end)
+-- ── Vehicle spawn/delete → handled by d4rk_garage ─────────
 
 -- ── Duty sync ─────────────────────────────────────────────────
 
@@ -470,14 +373,12 @@ RegisterNetEvent('d4rk_emergency:client:dutyChanged', function(onDuty, deptKey)
     isOnDuty    = onDuty
     currentDept = onDuty and deptKey or nil
 
-    local dept = Config.Departments[deptKey]
+    -- ActiveConfig bevorzugen (hat ped/prop Felder aus DB)
+    local dept = (type(ActiveConfig) == 'table' and ActiveConfig[deptKey])
+              or Config.Departments[deptKey]
     if dept then
         RegisterDeptZones(deptKey, dept)
     end
-end)
-
-RegisterNetEvent('d4rk_emergency:client:updateDutyCount', function(deptKey, count)
-    dutyCounts[deptKey] = count
 end)
 
 -- ── Blip init ─────────────────────────────────────────────────

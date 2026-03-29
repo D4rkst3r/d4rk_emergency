@@ -44,11 +44,7 @@ CreateThread(function()
             end
         end
 
-        -- Sync fleet for all departments
-        for deptKey, dept in pairs(ActiveConfig) do
-            Garage.SyncFleet(deptKey, dept)
-        end
-        Log('Fleet synced.', 'success')
+        -- Fleet wird von d4rk_garage verwaltet
 
         -- Broadcast blips to already-connected clients
         local blipData = BuildBlipData()

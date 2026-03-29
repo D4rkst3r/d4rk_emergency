@@ -30,7 +30,6 @@ client_scripts {
 server_scripts {
     '@oxmysql/lib/MySQL.lua',
     'server/db.lua',
-    'server/garage.lua',   -- must be before main.lua (defines Garage global)
     'server/main.lua',
     'server/admin.lua',
 }
