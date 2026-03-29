@@ -1,16 +1,14 @@
 -- ============================================================
---  d4rk_emergency — Admin Layer v2
---  Browser: http://server:30120/d4rk_emergency/
---  In-game: /<Config.Admin.Command>  (ace: Config.Admin.Ace)
---  Uses d4rk_core for: IsAdmin, IsSuperAdmin, Log
+--  PATCH: d4rk_emergency/server/admin.lua
+--  Ersetzt die bestehende Datei komplett.
+--  Änderungen:
+--    1. checkToken() akzeptiert X-ACP-Token (d4rk_acp Proxy)
+--       UND den alten Bearer Token (Legacy In-Game Panel)
+--    2. Modul registriert sich bei d4rk_acp on startup
+--    3. CORS Headers erweitert für ACP Proxy
 -- ============================================================
 
-local adminToken = Config.Admin.Token
-
--- ── d4rk_core shortcuts ───────────────────────────────────────
-
 local function IsAdmin(source)
-    -- Eigene Ace-Permission ODER d4rk_core admin check
     if IsPlayerAceAllowed(source, Config.Admin.Ace) then return true end
     return exports['d4rk_core']:IsAdmin(source)
 end
@@ -20,8 +18,6 @@ local function Log(msg, level, fields)
 end
 
 -- ── Collaboration state ───────────────────────────────────────
--- presences[adminId] = { name, color, deptKey, lastSeen }
--- DeptMeta is defined as a global in db.lua and seeded in DB.LoadAll
 
 local presences = {}
 
@@ -56,18 +52,26 @@ end
 
 local function jsonRes(res, code, data)
     res.writeHead(code, {
-        ['Content-Type']                = 'application/json',
-        ['Access-Control-Allow-Origin'] = '*',
+        ['Content-Type']                 = 'application/json',
+        ['Access-Control-Allow-Origin']  = '*',
+        ['Access-Control-Allow-Headers'] =
+        'Content-Type, Authorization, X-ACP-Token, X-Discord-Id, X-Permission, X-Username',
     })
     res.send(json.encode(data))
 end
 
 local function checkToken(req)
-    local auth = (req.headers and (req.headers['Authorization'] or req.headers['authorization'])) or ''
-    return auth == ('Bearer ' .. adminToken)
+    local headers  = req.headers or {}
+    -- 1. ACP Proxy Token (von d4rk_acp)
+    local acpToken = headers['X-ACP-Token'] or headers['x-acp-token'] or ''
+    if acpToken ~= '' then
+        local ok = exports['d4rk_acp']:validateRequest(req)
+        return ok
+    end
+    -- 2. Legacy Bearer Token (In-Game Panel)
+    local auth = headers['Authorization'] or headers['authorization'] or ''
+    return auth == ('Bearer ' .. Config.Admin.Token)
 end
-
--- ── Export helpers ────────────────────────────────────────────
 
 local function getAllDepts()
     local list = {}
@@ -83,59 +87,72 @@ local function getAllDepts()
     return list
 end
 
+-- ── Register with d4rk_acp ────────────────────────────────────
+
+CreateThread(function()
+    Wait(1000)
+    exports['d4rk_acp']:registerModule({
+        id            = 'emergency',
+        label         = 'Departments',
+        icon          = '🏛',
+        resource      = 'd4rk_emergency',
+        minPermission = 'moderator',
+        order         = 1,
+    })
+end)
+
 -- ── HTTP Handler ──────────────────────────────────────────────
 
 local adminHtml = LoadResourceFile(GetCurrentResourceName(), 'html/admin/index.html')
 
 SetHttpHandler(function(req, res)
-    local path   = req.path   or '/'
+    local path   = req.path or '/'
     local method = req.method or 'GET'
 
-    -- ── Serve panel HTML ────────────────────────────────────
+    -- Legacy in-game panel HTML
     if method == 'GET' and (path == '/' or path == '' or path == '/admin') then
         res.writeHead(200, { ['Content-Type'] = 'text/html; charset=utf-8' })
         res.send(adminHtml or '<h1>Not found</h1>')
         return
     end
 
-    -- ── CORS preflight ──────────────────────────────────────
     if method == 'OPTIONS' then
         res.writeHead(204, {
             ['Access-Control-Allow-Origin']  = '*',
             ['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS',
-            ['Access-Control-Allow-Headers'] = 'Content-Type, Authorization',
+            ['Access-Control-Allow-Headers'] =
+            'Content-Type, Authorization, X-ACP-Token, X-Discord-Id, X-Permission, X-Username',
         })
         res.send('')
         return
     end
 
-    -- ── Auth check ──────────────────────────────────────────
     if not checkToken(req) then
         jsonRes(res, 401, { success = false, error = 'Unauthorized' })
         return
     end
 
-    -- ── GET /api/departments ────────────────────────────────
+    -- GET /api/departments
     if method == 'GET' and path == '/api/departments' then
         jsonRes(res, 200, getAllDepts())
         return
     end
 
-    -- ── GET /api/status ─────────────────────────────────────
+    -- GET /api/status
     if method == 'GET' and path == '/api/status' then
         jsonRes(res, 200, { editors = getEditors(), versions = getVersions() })
         return
     end
 
-    -- ── POST /api/presence ──────────────────────────────────
+    -- POST /api/presence
     if method == 'POST' and path == '/api/presence' then
         req.setDataHandler(function(body)
             local ok, data = pcall(json.decode, body)
             if ok and data and data.adminId then
                 presences[data.adminId] = {
-                    name     = data.name    or 'Admin',
-                    color    = data.color   or '#4f8ef7',
-                    deptKey  = data.deptKey or '',
+                    name = data.name or 'Admin',
+                    color = data.color or '#4f8ef7',
+                    deptKey = data.deptKey or '',
                     lastSeen = os.time(),
                 }
                 jsonRes(res, 200, { success = true })
@@ -146,7 +163,7 @@ SetHttpHandler(function(req, res)
         return
     end
 
-    -- ── POST /api/departments/:key ──────────────────────────
+    -- POST /api/departments/:key
     if method == 'POST' then
         local saveKey = path:match('^/api/departments/(.+)$')
         if saveKey then
@@ -156,18 +173,17 @@ SetHttpHandler(function(req, res)
                     jsonRes(res, 400, { success = false, error = 'Invalid JSON' })
                     return
                 end
-
                 DB.ApplyToActiveConfig(saveKey, data)
                 DeptMeta[saveKey] = { updatedAt = os.time(), updatedBy = data._savedBy or 'Admin' }
-
                 DB.Save(saveKey, ActiveConfig[saveKey], function(saved)
                     if saved then
+                        -- Sync fleet wenn d4rk_garage läuft
+                        pcall(function() exports['d4rk_garage']:syncFleetForDept(saveKey, ActiveConfig[saveKey]) end)
                         local exported = DB.ExportDept(saveKey, ActiveConfig[saveKey])
                         exported.updatedAt = DeptMeta[saveKey].updatedAt
                         exported.updatedBy = DeptMeta[saveKey].updatedBy
                         TriggerClientEvent('d4rk_emergency:client:configUpdated', -1, saveKey, exported)
-                        Log(('Dept "%s" saved via browser panel'):format(saveKey), 'success',
-                            { savedBy = data._savedBy or 'unknown' })
+                        Log(('Dept "%s" saved'):format(saveKey), 'success', { savedBy = data._savedBy or 'unknown' })
                         jsonRes(res, 200, { success = true, updatedAt = DeptMeta[saveKey].updatedAt })
                     else
                         jsonRes(res, 500, { success = false, error = 'DB save failed' })
@@ -178,7 +194,7 @@ SetHttpHandler(function(req, res)
         end
     end
 
-    -- ── DELETE /api/departments/:key ────────────────────────
+    -- DELETE /api/departments/:key
     if method == 'DELETE' then
         local delKey = path:match('^/api/departments/(.+)$')
         if delKey then
@@ -190,7 +206,7 @@ SetHttpHandler(function(req, res)
             DeptMeta[delKey]     = nil
             MySQL.update('DELETE FROM `d4rk_emergency_departments` WHERE dept_key = ?', { delKey })
             TriggerClientEvent('d4rk_emergency:client:deptDeleted', -1, delKey)
-            Log(('Dept "%s" deleted via browser panel'):format(delKey), 'warn')
+            Log(('Dept "%s" deleted'):format(delKey), 'warn')
             jsonRes(res, 200, { success = true })
             return
         end
@@ -199,7 +215,7 @@ SetHttpHandler(function(req, res)
     jsonRes(res, 404, { success = false, error = 'Not found' })
 end)
 
--- ── NUI Callbacks ─────────────────────────────────────────────
+-- ── NUI Callbacks (Legacy In-Game Panel) ──────────────────────
 
 lib.callback.register('d4rk_emergency:admin:getDepts', function(source)
     if not IsAdmin(source) then return nil, 'Access denied' end
@@ -214,12 +230,8 @@ end)
 lib.callback.register('d4rk_emergency:admin:presence', function(source, data)
     if not IsAdmin(source) then return false end
     if data and data.adminId then
-        presences[data.adminId] = {
-            name     = data.name    or 'Admin',
-            color    = data.color   or '#4f8ef7',
-            deptKey  = data.deptKey or '',
-            lastSeen = os.time(),
-        }
+        presences[data.adminId] = { name = data.name or 'Admin', color = data.color or '#4f8ef7', deptKey = data.deptKey or
+        '', lastSeen = os.time() }
     end
     return true
 end)
@@ -227,17 +239,15 @@ end)
 lib.callback.register('d4rk_emergency:admin:saveDept', function(source, deptKey, data)
     if not IsAdmin(source) then return { success = false, error = 'Access denied' } end
     if type(data) ~= 'table' then return { success = false, error = 'Invalid data' } end
-
     DB.ApplyToActiveConfig(deptKey, data)
     DeptMeta[deptKey] = { updatedAt = os.time(), updatedBy = data._savedBy or 'Admin' }
-
     local saved = DB.SaveAwait(deptKey, ActiveConfig[deptKey])
     if saved then
+        pcall(function() exports['d4rk_garage']:syncFleetForDept(deptKey, ActiveConfig[deptKey]) end)
         local exported = DB.ExportDept(deptKey, ActiveConfig[deptKey])
         exported.updatedAt = DeptMeta[deptKey].updatedAt
         exported.updatedBy = DeptMeta[deptKey].updatedBy
         TriggerClientEvent('d4rk_emergency:client:configUpdated', -1, deptKey, exported)
-        Log(('Dept "%s" saved via NUI by %s'):format(deptKey, data._savedBy or 'unknown'), 'success')
         return { success = true, updatedAt = DeptMeta[deptKey].updatedAt }
     end
     return { success = false, error = 'DB save failed' }
@@ -246,12 +256,9 @@ end)
 lib.callback.register('d4rk_emergency:admin:deleteDept', function(source, deptKey)
     if not IsAdmin(source) then return { success = false, error = 'Access denied' } end
     if not ActiveConfig[deptKey] then return { success = false, error = 'Not found' } end
-
     ActiveConfig[deptKey] = nil
     DeptMeta[deptKey]     = nil
     DB.DeleteAwait(deptKey)
     TriggerClientEvent('d4rk_emergency:client:deptDeleted', -1, deptKey)
-    Log(('Dept "%s" deleted via NUI by %s'):format(
-        deptKey, exports['d4rk_core']:GetPlayerName(source)), 'warn')
     return { success = true }
 end)

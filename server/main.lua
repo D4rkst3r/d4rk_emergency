@@ -212,6 +212,16 @@ lib.callback.register('d4rk_emergency:server:getActiveConfig', function(source)
     return nil
 end)
 
+
+-- Gibt alle aktiven Dept-Configs zurück (für d4rk_garage + d4rk_acp)
+exports('getDeptConfig', function(deptKey)
+    return ActiveConfig[deptKey]
+end)
+
+exports('getAllDepts', function()
+    return ActiveConfig
+end)
+
 -- ── Cleanup ───────────────────────────────────────────────────
 
 AddEventHandler('playerDropped', function()

@@ -495,6 +495,15 @@ RegisterNetEvent('d4rk_emergency:client:deptDeleted', function(deptKey)
     RemoveDeptZones(deptKey)
 end)
 
+
+-- Gibt Client-seitige Dept Config zurück (für d4rk_garage client)
+exports('getClientDeptConfig', function(deptKey)
+    if type(ActiveConfig) == 'table' and ActiveConfig[deptKey] then
+        return ActiveConfig[deptKey]
+    end
+    return Config.Departments[deptKey]
+end)
+
 -- ── Resource start / stop ─────────────────────────────────────
 
 AddEventHandler('onClientResourceStart', function(resourceName)
