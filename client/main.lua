@@ -2,9 +2,14 @@
 --  d4rk_emergency — Client Main
 -- ============================================================
 
+ActiveConfig = {}  -- wird via Server Callback befüllt
+
 local isOnDuty    = false
 local currentDept = nil
 local dutyCounts  = {}
+
+
+
 
 -- ── d4rk_core shortcuts ───────────────────────────────────────
 
@@ -126,6 +131,27 @@ local function DespawnDeptEntities(deptKey)
         end
     end
     spawnedEntities[deptKey] = nil
+end
+
+-- ── Spawn peds/props for all depts (no interaction) ─────────
+
+local function SpawnAllDeptEntities()
+    local source = (type(ActiveConfig) == 'table' and next(ActiveConfig)) and ActiveConfig or Config.Departments
+    for deptKey, dept in pairs(source) do
+        if not spawnedEntities[deptKey] then
+            spawnedEntities[deptKey] = {}
+        end
+        local zoneKeys = { 'dutyZone', 'cloakroomZone', 'armoryZone', 'garageZone' }
+        for _, zk in ipairs(zoneKeys) do
+            local zoneData = dept[zk]
+            if zoneData and not spawnedEntities[deptKey][zk] then
+                local entity = SpawnZoneEntity(zoneData)
+                if entity then
+                    spawnedEntities[deptKey][zk] = entity
+                end
+            end
+        end
+    end
 end
 
 -- ── Zone management ───────────────────────────────────────────
@@ -304,12 +330,21 @@ end
 local function InitZones()
     while not exports.qbx_core:GetPlayerData() do Wait(500) end
 
-    local attempts = 0
-    while (type(ActiveConfig) ~= 'table' or not next(ActiveConfig)) and attempts < 20 do
-        Wait(500)
-        attempts = attempts + 1
+    -- Alle Dept-Configs vom Server holen (hat ped/prop Felder aus DB)
+    local allDepts = lib.callback.await('d4rk_emergency:server:getAllConfigs', false)
+    if allDepts and type(allDepts) == 'table' then
+        for key, data in pairs(allDepts) do
+            ActiveConfig[key] = data
+        end
+        print('[d4rk_emergency] InitZones: loaded ' .. DC.TableCount(ActiveConfig) .. ' dept(s) from server')
+    else
+        print('[d4rk_emergency] InitZones: no server config, using static fallback')
     end
 
+    -- Peds/Props für ALLE Depts spawnen (sichtbar für jeden)
+    SpawnAllDeptEntities()
+
+    -- Interaktionen (ox_target) nur für eigenes Dept registrieren
     local deptKey, dept = GetCurrentDept()
     if not deptKey then
         print('[d4rk_emergency] InitZones: no matching dept for job ' .. tostring(GetPlayerJob()))

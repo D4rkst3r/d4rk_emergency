@@ -209,6 +209,26 @@ lib.callback.register('d4rk_emergency:server:getActiveConfig', function(source)
 end)
 
 
+-- Gibt alle Dept-Configs zurück (für InitZones — Peds/Props für alle sichtbar)
+lib.callback.register('d4rk_emergency:server:getAllConfigs', function(source)
+    local Player = exports.qbx_core:GetPlayer(source)
+    if not Player then return nil end
+
+    -- Warten bis ActiveConfig vom DB-Load befüllt ist
+    local attempts = 0
+    while not next(ActiveConfig) and attempts < 20 do
+        Wait(500)
+        attempts = attempts + 1
+    end
+
+    local result = {}
+    for deptKey, dept in pairs(ActiveConfig) do
+        result[deptKey] = DB.ExportDept(deptKey, dept)
+    end
+    return result
+end)
+
+
 -- Gibt alle aktiven Dept-Configs zurück (für d4rk_garage + d4rk_acp)
 exports('getDeptConfig', function(deptKey)
     return ActiveConfig[deptKey]

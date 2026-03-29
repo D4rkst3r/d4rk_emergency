@@ -74,7 +74,7 @@ end)
 -- ── Config hot-reload ─────────────────────────────────────────
 
 RegisterNetEvent('d4rk_emergency:client:configUpdated', function(deptKey, deptData)
-    -- 1. Update local Config.Departments
+    -- 1. Statische Config aktualisieren (Fallback)
     if Config.Departments[deptKey] then
         local dept = Config.Departments[deptKey]
         dept.label         = deptData.label
@@ -91,10 +91,11 @@ RegisterNetEvent('d4rk_emergency:client:configUpdated', function(deptKey, deptDa
         dept.garageZone    = deptData.garageZone    or dept.garageZone
     end
 
-    -- 2. Refresh blips live
-    RefreshDeptBlips(deptKey, deptData)
+    -- 2. ActiveConfig auf Client aktualisieren (hat ped/prop Felder)
+    ActiveConfig[deptKey] = deptData
 
-    -- 3. Refresh ox_target zones live (only affects the player's own dept)
+    -- 3. Blips + Zones live refreshen
+    RefreshDeptBlips(deptKey, deptData)
     RefreshDeptZones(deptKey, deptData)
 end)
 
